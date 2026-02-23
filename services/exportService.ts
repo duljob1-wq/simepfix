@@ -2,7 +2,7 @@
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
-import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, WidthType, HeadingLevel, AlignmentType, BorderStyle, PageBreak, UnderlineType } from 'docx';
+import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, WidthType, HeadingLevel, AlignmentType, BorderStyle, PageBreak, UnderlineType, VerticalAlign } from 'docx';
 import saveAs from 'file-saver';
 import { Training, Response, QuestionType } from '../types';
 import { getResponses, getSettings } from './storageService';
@@ -13,7 +13,7 @@ const formatDateID = (dateStr: string) => {
     return new Date(dateStr).toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 };
 
-// Helper Logic for Labeling (Shared Logic)
+// Helper Logic for Labeling
 const getScoreLabel = (val: number, type: QuestionType) => {
     if (type === 'text') return '';
     if (type === 'star') {
@@ -30,7 +30,7 @@ const getScoreLabel = (val: number, type: QuestionType) => {
     }
 };
 
-// HELPER: Calculate Percentage Distribution (String Output with %)
+// HELPER: Calculate Percentage Distribution
 const calculateDistributionExport = (responses: Response[], qId: string, type: QuestionType) => {
     const counts = { k: 0, s: 0, b: 0, sb: 0, total: 0 };
     responses.forEach(r => {
@@ -38,7 +38,6 @@ const calculateDistributionExport = (responses: Response[], qId: string, type: Q
         if (typeof val === 'number') {
             counts.total++;
             if (type === 'star') {
-                // 1=Kurang, 2&3=Sedang, 4=Baik, 5=Sangat Baik
                 if (val <= 1) counts.k++;
                 else if (val <= 3) counts.s++;
                 else if (val === 4) counts.b++;
@@ -62,6 +61,21 @@ const calculateDistributionExport = (responses: Response[], qId: string, type: Q
     };
 };
 
+// Helper: Split array into chunks for 2-column layout
+const splitCommentsToPairs = (comments: string[]) => {
+    const half = Math.ceil(comments.length / 2);
+    const left = comments.slice(0, half);
+    const right = comments.slice(half);
+    const rows = [];
+    for (let i = 0; i < Math.max(left.length, right.length); i++) {
+        rows.push([
+            left[i] ? `•  ${left[i]}` : '', // Added extra space after bullet
+            right[i] ? `•  ${right[i]}` : ''
+        ]);
+    }
+    return rows;
+};
+
 interface SessionExportData {
     name: string; 
     subject: string;
@@ -82,7 +96,7 @@ const processDataForExport = (training: Training, responses: Response[]) => {
       averages: {},
       rawAverages: {}, 
       comments: {},
-      distributions: {}, // Store distributions here
+      distributions: {}, 
       overall: '', 
       overallVal: 0
     }
@@ -165,7 +179,6 @@ const processDataForExport = (training: Training, responses: Response[]) => {
       const avg = scores.length ? scores.reduce((a: any, b: any) => a + b, 0) / scores.length : 0;
       result.process.rawAverages[q.id] = avg;
       
-      // Calculate Distribution for Process
       result.process.distributions[q.id] = calculateDistributionExport(procResponses, q.id, q.type);
 
       totalProcScore += avg;
@@ -217,12 +230,21 @@ const getSortedFacilitatorNamesForRecap = (dataFacilitators: Record<string, Sess
     return names;
 };
 
-// --- HELPER: ADD PDF SIGNATURE ---
-const addPdfSignature = (doc: jsPDF, settings: any) => {
+// --- HELPER: ADD DYNAMIC PDF SIGNATURE ---
+// TTD didekatkan dengan teks terakhir (+ jarak 1/2 baris)
+const addPdfSignatureDynamic = (doc: jsPDF, settings: any, startY: number) => {
     const pageHeight = doc.internal.pageSize.height;
-    // TTD Position: Bottom Right (Absolute)
-    const sigY = pageHeight - 45; 
-    const sigCenterX = 150; // Approx right center for A4
+    // Jarak 1/2 baris (approx 5-6pt) + tinggi signature block
+    const requiredSpace = 50; 
+    let currentY = startY + 6; // Jarak 1/2 baris dari konten terakhir
+
+    // Cek jika halaman tidak cukup
+    if (currentY + requiredSpace > pageHeight - 20) {
+        doc.addPage();
+        currentY = 20;
+    }
+
+    const sigCenterX = 150; // Posisi X (Kanan)
 
     const sigTitle = settings.signatureTitle || 'Kepala Seksi Penyelenggaraan Pelatihan';
     const sigName = settings.signatureName || 'MUNCUL WIYANA, S.Kep., Ns., M.Kep.';
@@ -230,17 +252,19 @@ const addPdfSignature = (doc: jsPDF, settings: any) => {
 
     doc.setFontSize(10);
     doc.setFont("helvetica", "normal");
-    doc.text(sigTitle, sigCenterX, sigY, { align: 'center' });
+    doc.text(sigTitle, sigCenterX, currentY, { align: 'center' });
     
     doc.setFont("helvetica", "bold");
-    doc.text(sigName, sigCenterX, sigY + 25, { align: 'center' });
+    doc.text(sigName, sigCenterX, currentY + 25, { align: 'center' });
     
-    // Manual Underline
     const textWidth = doc.getTextWidth(sigName);
-    doc.line(sigCenterX - (textWidth / 2), sigY + 26, sigCenterX + (textWidth / 2), sigY + 26);
+    doc.line(sigCenterX - (textWidth / 2), currentY + 26, sigCenterX + (textWidth / 2), currentY + 26);
 
     doc.setFont("helvetica", "normal");
-    doc.text(sigNIP, sigCenterX, sigY + 30, { align: 'center' });
+    doc.text(sigNIP, sigCenterX, currentY + 30, { align: 'center' });
+    
+    // Return Y akhir untuk referensi jika dibutuhkan
+    return currentY + 35;
 };
 
 export const exportToPDF = async (training: Training) => {
@@ -250,7 +274,7 @@ export const exportToPDF = async (training: Training) => {
   const doc = new jsPDF();
   const timestamp = formatDateID(new Date().toISOString());
 
-  // --- HALAMAN COVER / DEPAN & FASILITATOR PERTAMA ---
+  // --- HALAMAN COVER ---
   doc.setFontSize(16);
   doc.setFont("helvetica", "bold");
   doc.text('Laporan Rekapitulasi Evaluasi Pelatihan', 14, 20);
@@ -293,7 +317,6 @@ export const exportToPDF = async (training: Training) => {
         y += 5;
     }
 
-    // Fac Header
     doc.setFontSize(11);
     doc.setFont("helvetica", "bold");
     doc.setFillColor(230, 230, 250); 
@@ -333,34 +356,52 @@ export const exportToPDF = async (training: Training) => {
     
     y = (doc as any).lastAutoTable.finalY + 5;
 
-    // Comments Section
+    // Comments Section (Split 2 Columns with Divider)
     const textQs = training.facilitatorQuestions.filter(q => q.type === 'text');
     textQs.forEach(q => {
         const comments = session.comments[q.id];
         if (comments && comments.length > 0) {
-            if (y > 230) { doc.addPage(); y = 20; } 
+            // Check page break before header
+            if (y > 250) { doc.addPage(); y = 20; }
             
             doc.setFont("helvetica", "bold");
             doc.setFontSize(9);
             doc.text(`Komentar - ${q.label}:`, 14, y);
-            y += 3;
+            y += 4;
 
-            const commentRows = comments.map((c: string) => [`• ${c}`]);
+            const splitRows = splitCommentsToPairs(comments);
+            
             autoTable(doc, {
                 startY: y,
-                body: commentRows,
-                theme: 'plain',
-                styles: { fontSize: 8, cellPadding: 0.5, overflow: 'linebreak', rowHeight: 0, valign: 'top' },
-                margin: { left: 14, right: 14 }
+                body: splitRows,
+                theme: 'plain', // Clean look
+                // REDUCED PADDING FROM 3 to 1 to tighten spacing
+                styles: { fontSize: 8, cellPadding: 1, overflow: 'linebreak', valign: 'top' },
+                columnStyles: {
+                    0: { cellWidth: 85 }, // Left column
+                    1: { cellWidth: 85 }  // Right column
+                },
+                margin: { left: 14, right: 14 },
+                didDrawCell: (data) => {
+                    // Draw vertical line separator in the middle
+                    if (data.column.index === 0 && data.section === 'body') {
+                        // Position line exactly between columns
+                        const lineX = data.cell.x + data.cell.width; 
+                        doc.setDrawColor(0, 0, 0); // Black
+                        doc.setLineWidth(0.5); // Thicker line
+                        doc.line(lineX, data.cell.y, lineX, data.cell.y + data.cell.height);
+                    }
+                }
             });
-            y = (doc as any).lastAutoTable.finalY + 2;
+            y = (doc as any).lastAutoTable.finalY + 5;
         }
     });
     
-    addPdfSignature(doc, settings);
+    // TTD Dynamic Close
+    addPdfSignatureDynamic(doc, settings, y);
   });
 
-  // --- B. REKAPITULASI ---
+  // --- B. REKAPITULASI (Chunked 12 Rows/Page) ---
   doc.addPage();
   y = 20;
   
@@ -375,7 +416,6 @@ export const exportToPDF = async (training: Training) => {
   let grandCount = 0;
 
   const sortedNames = getSortedFacilitatorNamesForRecap(data.facilitators, training);
-
   sortedNames.forEach((name) => {
       data.facilitators[name].forEach((session: SessionExportData) => {
         summaryRows.push([
@@ -390,31 +430,61 @@ export const exportToPDF = async (training: Training) => {
       });
   });
 
+  // Calculate Average Row
   const grandAvg = grandCount > 0 ? grandTotal / grandCount : 0;
   const grandLabelType: QuestionType = grandAvg > 5 ? 'slider' : 'star';
   const grandDisplay = `${grandAvg.toFixed(2)} (${getScoreLabel(grandAvg, grandLabelType)})`;
+  const grandTotalRow = ['', '', '', 'RATA-RATA TOTAL', grandDisplay];
 
-  summaryRows.push(['', '', '', 'RATA-RATA TOTAL', grandDisplay]);
-
-  autoTable(doc, {
-      startY: y,
-      head: [['No', 'Nama Fasilitator', 'Materi', 'Tanggal', 'Nilai Akhir']],
-      body: summaryRows,
-      theme: 'striped',
-      headStyles: { fillColor: [50, 50, 50] },
-      columnStyles: { 0: { cellWidth: 10, halign: 'center' }, 4: { fontStyle: 'bold', halign: 'center' } },
-      margin: { left: 14, right: 14 },
-      didParseCell: function (data) {
-        if (data.section === 'body' && data.row.index === summaryRows.length - 1) {
-             data.cell.styles.fontStyle = 'bold';
-             data.cell.styles.fillColor = [229, 231, 235]; 
-        }
-      }
-  });
+  // Manual Pagination (Limit 12 rows)
+  const rowsPerPage = 12;
+  const totalSummaryRows = summaryRows.length;
   
-  addPdfSignature(doc, settings);
+  // If empty
+  if (totalSummaryRows === 0) {
+       doc.text("(Tidak ada data)", 14, y + 5);
+       y += 10;
+  } else {
+      for (let i = 0; i < totalSummaryRows; i += rowsPerPage) {
+          const chunk = summaryRows.slice(i, i + rowsPerPage);
+          // If this is the very last chunk, append the Grand Total row
+          if (i + rowsPerPage >= totalSummaryRows) {
+              chunk.push(grandTotalRow);
+          }
 
-  // --- C. PENYELENGGARAAN (UPDATED) ---
+          if (i > 0) {
+              doc.addPage();
+              y = 20;
+              // Removed title text for subsequent pages
+          }
+
+          autoTable(doc, {
+              startY: y,
+              head: [['No', 'Nama Fasilitator', 'Materi', 'Tanggal', 'Nilai Akhir']],
+              body: chunk,
+              theme: 'striped',
+              headStyles: { fillColor: [50, 50, 50] },
+              columnStyles: { 0: { cellWidth: 10, halign: 'center' }, 4: { fontStyle: 'bold', halign: 'center' } },
+              margin: { left: 14, right: 14 },
+              didParseCell: function (data) {
+                  // Style Grand Total row
+                  const isLastChunk = (i + rowsPerPage >= totalSummaryRows);
+                  const isLastRowInChunk = (data.row.index === chunk.length - 1);
+                  if (isLastChunk && isLastRowInChunk && data.section === 'body') {
+                        data.cell.styles.fontStyle = 'bold';
+                        data.cell.styles.fillColor = [229, 231, 235]; 
+                  }
+              }
+          });
+          y = (doc as any).lastAutoTable.finalY + 5;
+      }
+  }
+  
+  // TTD Dynamic Close
+  addPdfSignatureDynamic(doc, settings, y);
+
+
+  // --- C. PENYELENGGARAAN (Breakdown + Split Comments) ---
   doc.addPage();
   y = 20;
 
@@ -430,7 +500,6 @@ export const exportToPDF = async (training: Training) => {
     y += 6;
   }
 
-  // UPDATED: Proc Rows with Breakdown (No Column)
   const procRows: any[] = [];
   let procNo = 1;
 
@@ -446,13 +515,9 @@ export const exportToPDF = async (training: Training) => {
       ]);
   });
 
-  // Note: We don't put Overall Avg in this specific table structure as it's percentage based, 
-  // but we can add it as a summary row or a separate block. 
-  // Based on request, we stick to the detailed percentage table.
-
   autoTable(doc, {
     startY: y,
-    head: [['No', 'Hal-hal yang dievaluasi', 'Kurang', 'Sedang', 'Baik', 'Sgt.Baik']], // Header update
+    head: [['No', 'Hal-hal yang dievaluasi', 'Kurang', 'Sedang', 'Baik', 'Sgt.Baik']],
     body: procRows,
     theme: 'grid',
     headStyles: { fillColor: [255, 255, 255], textColor: [0,0,0], lineColor: [0,0,0], lineWidth: 0.1, fontSize: 9, halign: 'center', valign: 'middle' },
@@ -474,25 +539,38 @@ export const exportToPDF = async (training: Training) => {
   procTextQs.forEach(q => {
       const comments = data.process.comments[q.id];
       if (comments && comments.length > 0) {
-          if (y > 230) { doc.addPage(); y = 20; }
+          if (y > 250) { doc.addPage(); y = 20; }
+          
           doc.setFont("helvetica", "bold");
           doc.setFontSize(9);
           doc.text(`Komentar - ${q.label}:`, 14, y);
-          y += 3;
+          y += 4;
 
-          const commentRows = comments.map((c: string) => [`• ${c}`]);
-          autoTable(doc, {
-              startY: y,
-              body: commentRows,
-              theme: 'plain',
-              styles: { fontSize: 8, cellPadding: 0.5 },
-              margin: { left: 14, right: 14 }
-          });
-          y = (doc as any).lastAutoTable.finalY + 2;
+          const splitRows = splitCommentsToPairs(comments);
+            
+            autoTable(doc, {
+                startY: y,
+                body: splitRows,
+                theme: 'plain',
+                // REDUCED PADDING
+                styles: { fontSize: 8, cellPadding: 1, overflow: 'linebreak', valign: 'top' },
+                columnStyles: { 0: { cellWidth: 85 }, 1: { cellWidth: 85 } },
+                margin: { left: 14, right: 14 },
+                didDrawCell: (data) => {
+                    if (data.column.index === 0 && data.section === 'body') {
+                        const lineX = data.cell.x + data.cell.width;
+                        doc.setDrawColor(0, 0, 0); // Black
+                        doc.setLineWidth(0.5); // Thicker
+                        doc.line(lineX, data.cell.y, lineX, data.cell.y + data.cell.height);
+                    }
+                }
+            });
+          y = (doc as any).lastAutoTable.finalY + 5;
       }
   });
 
-  addPdfSignature(doc, settings);
+  // TTD Dynamic Close
+  addPdfSignatureDynamic(doc, settings, y);
 
   doc.save(`Laporan_SIMEP_${training.title.replace(/\s+/g, '_')}.pdf`);
 };
@@ -503,19 +581,18 @@ export const exportToExcel = async (training: Training) => {
   const data = processDataForExport(training, responses);
   const wb = XLSX.utils.book_new();
 
-  // Signature Data Rows
+  // Signature Rows (Reusable)
   const sigTitle = settings.signatureTitle || 'Kepala Seksi Penyelenggaraan Pelatihan';
   const sigName = settings.signatureName || 'MUNCUL WIYANA, S.Kep., Ns., M.Kep.';
   const sigNIP = settings.signatureNIP ? `NIP. ${settings.signatureNIP}` : '';
   
+  // TTD Dekat (Jarak 1/2 Baris - removed empty row buffer)
   const getSigRows = () => [
-      ['', '', '', ''],
-      ['', '', '', sigTitle],
-      ['', '', '', ''],
-      ['', '', '', ''],
-      ['', '', '', sigName],
-      ['', '', '', sigNIP],
-      ['', '', '', ''] 
+      ['', '', '', '', sigTitle],
+      ['', '', '', '', ''],
+      ['', '', '', '', ''],
+      ['', '', '', '', sigName],
+      ['', '', '', '', sigNIP]
   ];
 
   const infoData = [
@@ -552,12 +629,17 @@ export const exportToExcel = async (training: Training) => {
 
       const textQs = training.facilitatorQuestions.filter(q => q.type === 'text');
       if (textQs.length > 0) {
-          detailRows.push(['Komentar / Saran Responden:']);
+          detailRows.push(['Komentar / Saran Responden (Split):']);
           textQs.forEach(q => {
-              const cmts = session.comments[q.id];
-              if (cmts && cmts.length > 0) {
+              const cmts = session.comments[q.id] || [];
+              if (cmts.length > 0) {
                  detailRows.push([`[${q.label}]`]);
-                 cmts.forEach((c: string) => detailRows.push([` - ${c}`]));
+                 // SPLIT COMMENTS 2 COLUMNS IN EXCEL
+                 const split = splitCommentsToPairs(cmts);
+                 split.forEach(row => {
+                     // Row format: ['', left, right] to simulate spacing
+                     detailRows.push(['', row[0], row[1]]);
+                 });
               }
           });
       }
@@ -590,12 +672,13 @@ export const exportToExcel = async (training: Training) => {
 
   summaryRows.push(['', '', '', 'RATA-RATA TOTAL', grandDisplay]);
 
-  const rekapFinalRows = [...infoData, ['B. REKAPITULASI NILAI KESELURUHAN'], [], summaryHeader, ...summaryRows, ...getSigRows()];
+  // Excel doesn't paginate physically, but we put signature right after
+  const rekapFinalRows = [...infoData, ['B. REKAPITULASI NILAI KESELURUHAN'], [], summaryHeader, ...summaryRows, [], ...getSigRows()];
 
   const rekapWs = XLSX.utils.aoa_to_sheet(rekapFinalRows);
   XLSX.utils.book_append_sheet(wb, rekapWs, 'B. Rekapitulasi');
 
-  // --- C. PENYELENGGARAAN (UPDATED with Breakdown) ---
+  // --- C. PENYELENGGARAAN ---
   const procRows: any[] = [...infoData, ['C. EVALUASI PENYELENGGARAAN']];
   
   if (training.processOrganizer && training.processOrganizer.name) {
@@ -603,7 +686,6 @@ export const exportToExcel = async (training: Training) => {
   }
   
   procRows.push([]);
-  // Updated Header
   procRows.push(['No', 'Hal-hal yang dievaluasi', 'Kurang', 'Sedang', 'Baik', 'Sgt.Baik']);
   
   let procNo = 1;
@@ -619,12 +701,16 @@ export const exportToExcel = async (training: Training) => {
   const procTextQs = training.processQuestions.filter(q => q.type === 'text');
   if (procTextQs.length > 0) {
       procRows.push([]);
-      procRows.push(['Komentar / Saran Penyelenggaraan:']);
+      procRows.push(['Komentar / Saran Penyelenggaraan (Split):']);
       procTextQs.forEach(q => {
           const cmts = data.process.comments[q.id];
           if (cmts && cmts.length > 0) {
              procRows.push([`[${q.label}]`]);
-             cmts.forEach((c: string) => procRows.push([` - ${c}`]));
+             // SPLIT 2 COLUMNS
+             const split = splitCommentsToPairs(cmts);
+             split.forEach(row => {
+                 procRows.push(['', row[0], row[1]]);
+             });
           }
       });
   }
@@ -642,7 +728,7 @@ export const exportToWord = async (training: Training) => {
   const settings = await getSettings(); 
   const data = processDataForExport(training, responses);
 
-  // Helper Signature Generator for Word
+  // Helper Signature
   const createSignatureBlock = () => {
       const sigTitle = settings.signatureTitle || 'Kepala Seksi Penyelenggaraan Pelatihan';
       const sigName = settings.signatureName || 'MUNCUL WIYANA, S.Kep., Ns., M.Kep.';
@@ -652,12 +738,12 @@ export const exportToWord = async (training: Training) => {
           new Paragraph({
               children: [new TextRun({ text: sigTitle })],
               alignment: AlignmentType.RIGHT,
-              spacing: { before: 800 }
+              spacing: { before: 100 } // Jarak 1/2 baris (reduced from 200)
           }),
           new Paragraph({
               children: [new TextRun({ text: sigName, bold: true, underline: { type: UnderlineType.SINGLE, color: '000000' } })],
               alignment: AlignmentType.RIGHT,
-              spacing: { before: 1200 } 
+              spacing: { before: 1200 } // Space for signature
           }),
           new Paragraph({
               children: [new TextRun({ text: sigNIP })],
@@ -695,7 +781,7 @@ export const exportToWord = async (training: Training) => {
     spacing: { after: 400 },
   }));
 
-  // A. DETAIL FASILITATOR (Unchanged - omitted for brevity logic matches original)
+  // A. DETAIL FASILITATOR
   sections.push(new Paragraph({ text: "A. Evaluasi Detail Fasilitator", heading: HeadingLevel.HEADING_2 }));
   const flatSessions = getFlatChronologicalSessions(data.facilitators);
   flatSessions.forEach((session, idx) => {
@@ -705,6 +791,8 @@ export const exportToWord = async (training: Training) => {
     }));
     const sessionDateStr = session.sessionDate ? ` (${formatDateID(session.sessionDate)})` : '';
     sections.push(new Paragraph({ text: `Materi: ${session.subject}${sessionDateStr}`, bold: true, spacing: { before: 100 } }));
+    
+    // Scores Table
     const rows = [
         new TableRow({
             children: [
@@ -739,34 +827,61 @@ export const exportToWord = async (training: Training) => {
             insideVertical: { style: BorderStyle.SINGLE, size: 1 },
         }
     }));
+
+    // Comments Section (Split 2 Columns)
     const textQs = training.facilitatorQuestions.filter(q => q.type === 'text');
     textQs.forEach(q => {
         const comments = session.comments[q.id];
         if (comments && comments.length > 0) {
             sections.push(new Paragraph({ text: `Komentar - ${q.label}:`, bold: true, spacing: { before: 100 } }));
-            comments.forEach((c: string) => {
-                sections.push(new Paragraph({ text: `• ${c}`, bullet: { level: 0 }, spacing: { after: 0 } }));
-            });
+            
+            const splitRows = splitCommentsToPairs(comments);
+            const commentTableRows = splitRows.map(pair => new TableRow({
+                children: [
+                    new TableCell({ 
+                        children: [new Paragraph({ 
+                            text: pair[0], 
+                            spacing: { after: 0, before: 0 } // Remove paragraph spacing to tighten rows
+                        })], 
+                        width: { size: 50, type: WidthType.PERCENTAGE }, 
+                        borders: { right: { style: BorderStyle.SINGLE, size: 6, color: "000000" }, left: { style: BorderStyle.NONE }, top: { style: BorderStyle.NONE }, bottom: { style: BorderStyle.NONE } } 
+                    }),
+                    new TableCell({ 
+                        children: [new Paragraph({ 
+                            text: pair[1], 
+                            spacing: { after: 0, before: 0 } 
+                        })], 
+                        width: { size: 50, type: WidthType.PERCENTAGE }, 
+                        borders: { left: { style: BorderStyle.SINGLE, size: 6, color: "000000" }, right: { style: BorderStyle.NONE }, top: { style: BorderStyle.NONE }, bottom: { style: BorderStyle.NONE } } 
+                    })
+                ]
+            }));
+
+            sections.push(new Table({
+                width: { size: 100, type: WidthType.PERCENTAGE },
+                rows: commentTableRows,
+                borders: {
+                    top: { style: BorderStyle.NONE },
+                    bottom: { style: BorderStyle.NONE },
+                    left: { style: BorderStyle.NONE },
+                    right: { style: BorderStyle.NONE },
+                    insideVertical: { style: BorderStyle.SINGLE, size: 6, color: "000000" }, // Thicker black line
+                }
+            }));
         }
     });
+
     sections.push(...createSignatureBlock());
     sections.push(new Paragraph({ children: [new PageBreak()] })); 
   });
 
-  // B. REKAP (Unchanged - omitted for brevity logic matches original)
+  // B. REKAPITULASI (Chunked 12 Rows/Page)
   sections.push(new Paragraph({ text: "B. Rekapitulasi Nilai Keseluruhan", heading: HeadingLevel.HEADING_2, spacing: { before: 200 } }));
-  const summaryRows = [
-      new TableRow({
-        children: [
-          new TableCell({ children: [new Paragraph({ text: "No", bold: true })] }),
-          new TableCell({ children: [new Paragraph({ text: "Fasilitator", bold: true })] }),
-          new TableCell({ children: [new Paragraph({ text: "Materi", bold: true })] }),
-          new TableCell({ children: [new Paragraph({ text: "Nilai Akhir", bold: true })] }),
-        ],
-      }),
-  ];
+  
+  const summaryRows: TableRow[] = [];
   let no = 1; let grandTotal = 0; let grandCount = 0;
   const sortedNames = getSortedFacilitatorNamesForRecap(data.facilitators, training);
+  
   sortedNames.forEach((name) => {
       data.facilitators[name].forEach((session: SessionExportData) => {
         summaryRows.push(new TableRow({
@@ -780,40 +895,71 @@ export const exportToWord = async (training: Training) => {
         grandTotal += session.overallVal; grandCount++;
       });
   });
+
   const grandAvg = grandCount > 0 ? grandTotal / grandCount : 0;
   const grandLabelType: QuestionType = grandAvg > 5 ? 'slider' : 'star';
   const grandDisplay = `${grandAvg.toFixed(2)} (${getScoreLabel(grandAvg, grandLabelType)})`;
-  summaryRows.push(new TableRow({
+  const grandTotalRow = new TableRow({
       children: [
         new TableCell({ children: [new Paragraph("")] }),
         new TableCell({ children: [new Paragraph("")] }),
         new TableCell({ children: [new Paragraph({ text: "RATA-RATA TOTAL", bold: true })] }),
         new TableCell({ children: [new Paragraph({ text: grandDisplay, bold: true })] }),
       ]
-  }));
-  sections.push(new Table({
-      width: { size: 100, type: WidthType.PERCENTAGE },
-      rows: summaryRows,
-      borders: {
-          top: { style: BorderStyle.SINGLE, size: 1 },
-          bottom: { style: BorderStyle.SINGLE, size: 1 },
-          left: { style: BorderStyle.SINGLE, size: 1 },
-          right: { style: BorderStyle.SINGLE, size: 1 },
-          insideHorizontal: { style: BorderStyle.SINGLE, size: 1 },
-          insideVertical: { style: BorderStyle.SINGLE, size: 1 },
+  });
+
+  const headerRow = new TableRow({
+    children: [
+      new TableCell({ children: [new Paragraph({ text: "No", bold: true })] }),
+      new TableCell({ children: [new Paragraph({ text: "Fasilitator", bold: true })] }),
+      new TableCell({ children: [new Paragraph({ text: "Materi", bold: true })] }),
+      new TableCell({ children: [new Paragraph({ text: "Nilai Akhir", bold: true })] }),
+    ],
+  });
+
+  // Chunking for Word
+  const rowsPerPage = 12;
+  const totalSummaryRows = summaryRows.length;
+
+  if (totalSummaryRows === 0) {
+      sections.push(new Paragraph({ text: "(Tidak ada data)" }));
+  } else {
+      for (let i = 0; i < totalSummaryRows; i += rowsPerPage) {
+          const chunk = summaryRows.slice(i, i + rowsPerPage);
+          if (i + rowsPerPage >= totalSummaryRows) {
+              chunk.push(grandTotalRow);
+          }
+
+          if (i > 0) {
+              sections.push(new Paragraph({ children: [new PageBreak()] }));
+              // Removed text: sections.push(new Paragraph({ text: "B. Rekapitulasi (Lanjutan)", heading: HeadingLevel.HEADING_2 }));
+          }
+
+          sections.push(new Table({
+            width: { size: 100, type: WidthType.PERCENTAGE },
+            rows: [headerRow, ...chunk],
+            borders: {
+                top: { style: BorderStyle.SINGLE, size: 1 },
+                bottom: { style: BorderStyle.SINGLE, size: 1 },
+                left: { style: BorderStyle.SINGLE, size: 1 },
+                right: { style: BorderStyle.SINGLE, size: 1 },
+                insideHorizontal: { style: BorderStyle.SINGLE, size: 1 },
+                insideVertical: { style: BorderStyle.SINGLE, size: 1 },
+            }
+        }));
       }
-  }));
+  }
+
   sections.push(...createSignatureBlock());
   sections.push(new Paragraph({ children: [new PageBreak()] }));
 
-  // --- C. PENYELENGGARAAN (UPDATED) ---
+  // C. PENYELENGGARAAN (Split Comments)
   sections.push(new Paragraph({ text: "C. Evaluasi Penyelenggaraan", heading: HeadingLevel.HEADING_2, spacing: { before: 200 } }));
   
   if (training.processOrganizer && training.processOrganizer.name) {
        sections.push(new Paragraph({ text: `Penanggung Jawab: ${training.processOrganizer.name}`, spacing: { after: 100 } }));
   }
 
-  // Updated Word Table Header
   const procRows = [
       new TableRow({
         children: [
@@ -860,9 +1006,40 @@ export const exportToWord = async (training: Training) => {
       const comments = data.process.comments[q.id];
       if (comments && comments.length > 0) {
           sections.push(new Paragraph({ text: `Komentar - ${q.label}:`, bold: true, spacing: { before: 100 } }));
-          comments.forEach((c: string) => {
-              sections.push(new Paragraph({ text: `• ${c}`, bullet: { level: 0 }, spacing: { after: 0 } }));
-          });
+          
+          const splitRows = splitCommentsToPairs(comments);
+            const commentTableRows = splitRows.map(pair => new TableRow({
+                children: [
+                    new TableCell({ 
+                        children: [new Paragraph({ 
+                            text: pair[0],
+                            spacing: { after: 0, before: 0 } // Remove spacing
+                        })], 
+                        width: { size: 50, type: WidthType.PERCENTAGE }, 
+                        borders: { right: { style: BorderStyle.SINGLE, size: 6, color: "000000" }, left: { style: BorderStyle.NONE }, top: { style: BorderStyle.NONE }, bottom: { style: BorderStyle.NONE } } 
+                    }, ),
+                    new TableCell({ 
+                        children: [new Paragraph({ 
+                            text: pair[1],
+                            spacing: { after: 0, before: 0 } 
+                        })], 
+                        width: { size: 50, type: WidthType.PERCENTAGE }, 
+                        borders: { left: { style: BorderStyle.SINGLE, size: 6, color: "000000" }, right: { style: BorderStyle.NONE }, top: { style: BorderStyle.NONE }, bottom: { style: BorderStyle.NONE } } 
+                    })
+                ]
+            }));
+
+            sections.push(new Table({
+                width: { size: 100, type: WidthType.PERCENTAGE },
+                rows: commentTableRows,
+                borders: {
+                    top: { style: BorderStyle.NONE },
+                    bottom: { style: BorderStyle.NONE },
+                    left: { style: BorderStyle.NONE },
+                    right: { style: BorderStyle.NONE },
+                    insideVertical: { style: BorderStyle.SINGLE, size: 6, color: "000000" }, // Thicker black line
+                }
+            }));
       }
   });
 
