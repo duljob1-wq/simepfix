@@ -37,6 +37,8 @@ export interface Facilitator {
   whatsapp?: string; 
   isOpen?: boolean; 
   order?: number; 
+  isHidden?: boolean; // Hide entire session
+  hiddenQuestionIds?: string[]; // Hide specific questions for this session
 }
 
 export interface Training {

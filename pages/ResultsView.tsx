@@ -1,8 +1,9 @@
+
 import React, { useEffect, useState, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { getTrainingById, getResponses, deleteFacilitatorResponses, getSettings, saveTraining, renameFacilitator, toggleFacilitatorVisibility, updateFacilitatorSubject, updateFacilitatorsOrder } from '../services/storageService';
+import { getTrainingById, getResponses, deleteFacilitatorResponses, getSettings, saveTraining, renameFacilitator, toggleFacilitatorVisibility, updateFacilitatorSubject, updateFacilitatorsOrder, hideFacilitatorQuestions } from '../services/storageService';
 import { Training, Response, QuestionType, Question } from '../types';
-import { ArrowLeft, User, Layout, Quote, Calendar, Award, Trash2, Lock, UserCheck, AlertTriangle, RefreshCw, Eye, EyeOff, Save, CheckCircle, Pencil, X, ArrowUp, ArrowDown, Settings2, CheckSquare, Square, BarChart2, Edit2, Check, ListOrdered } from 'lucide-react';
+import { ArrowLeft, User, Layout, Quote, Calendar, Award, Trash2, Lock, UserCheck, AlertTriangle, RefreshCw, Eye, EyeOff, Save, CheckCircle, Pencil, X, ArrowUp, ArrowDown, Settings2, CheckSquare, Square, BarChart2, Edit2, Check, ListOrdered, Globe, Filter } from 'lucide-react';
 
 // --- HELPER FUNCTIONS ---
 const formatDateID = (dateStr: string) => {
@@ -128,7 +129,8 @@ interface SessionData {
     subject: string;
     date: string;
     items: Response[];
-    isHidden?: boolean; // Added property for session
+    isHidden?: boolean; 
+    hiddenQuestionIds?: string[]; // Specific hidden questions for this session
     overall: {
         starAvg: number;
         sliderAvg: number;
@@ -148,12 +150,10 @@ interface RestoreConfigItem {
 export const ResultsView: React.FC = () => {
   const { trainingId } = useParams<{ trainingId: string }>();
   
-  // --- 1. HOOKS DECLARATION (MUST BE TOP LEVEL) ---
   const [training, setTraining] = useState<Training | undefined>(undefined);
   const [responses, setResponses] = useState<Response[]>([]);
   const [activeTab, setActiveTab] = useState<'facilitator' | 'process'>('facilitator');
 
-  // GUEST & ROLE CHECK
   const isGuest = sessionStorage.getItem('isGuest') === 'true';
   const isSuperAdmin = sessionStorage.getItem('isSuperAdmin') === 'true';
 
@@ -166,6 +166,7 @@ export const ResultsView: React.FC = () => {
 
   // Variable Management State
   const [isManageMode, setIsManageMode] = useState(false);
+  const [scopeMode, setScopeMode] = useState<'global' | 'session'>('global'); // New Scope Toggle
   const [selectedVarIds, setSelectedVarIds] = useState<Set<string>>(new Set());
   const [isVarDeleteModalOpen, setIsVarDeleteModalOpen] = useState(false);
   const [varDeletePassword, setVarDeletePassword] = useState('');
@@ -177,12 +178,12 @@ export const ResultsView: React.FC = () => {
   const [restoreConfigs, setRestoreConfigs] = useState<RestoreConfigItem[]>([]);
 
   // Rename Facilitator State (Superadmin)
-  const [renamingTarget, setRenamingTarget] = useState<string | null>(null); // Name of facilitator being renamed
+  const [renamingTarget, setRenamingTarget] = useState<string | null>(null); 
   const [renameInput, setRenameInput] = useState('');
   const [isSavingName, setIsSavingName] = useState(false);
 
   // Edit Subject State (Superadmin)
-  const [editingSubjectKey, setEditingSubjectKey] = useState<string | null>(null); // Unique key: name|subject
+  const [editingSubjectKey, setEditingSubjectKey] = useState<string | null>(null); 
   const [subjectInput, setSubjectInput] = useState('');
   const [isSavingSubject, setIsSavingSubject] = useState(false);
 
@@ -191,7 +192,6 @@ export const ResultsView: React.FC = () => {
   const [reorderList, setReorderList] = useState<{key: string, name: string, subject: string}[]>([]);
   const [isSavingOrder, setIsSavingOrder] = useState(false);
 
-  // --- 2. EFFECT HOOKS ---
   useEffect(() => {
     const fetchData = async () => {
         if (trainingId) {
@@ -204,7 +204,6 @@ export const ResultsView: React.FC = () => {
     fetchData();
   }, [trainingId]);
 
-  // --- 3. MEMO HOOKS (LOGIC) ---
   const filteredResponses = useMemo(() => {
       return responses.filter(r => r.type === activeTab);
   }, [responses, activeTab]);
@@ -214,7 +213,6 @@ export const ResultsView: React.FC = () => {
       return activeTab === 'facilitator' ? training.facilitatorQuestions : training.processQuestions;
   }, [training, activeTab]);
 
-  // --- DATA RECOVERY LOGIC ---
   const orphanedQuestionIds = useMemo(() => {
       const currentIds = new Set(activeQuestions.map(q => q.id));
       const orphans = new Set<string>();
@@ -251,12 +249,8 @@ export const ResultsView: React.FC = () => {
           groupedSessions['penyelenggaraan|umum'] = filteredResponses;
       } else {
           filteredResponses.forEach(r => {
-              // NORMALIZE STRINGS: Trim whitespace AND lowercase to merge duplicates strictly
-              // This fixes "Name " vs "Name" AND "Name" vs "name" issues
               const name = (r.targetName || 'Umum').trim();
               const subject = (r.targetSubject || 'Umum').trim();
-              
-              // Use lowercase key for robust grouping
               const key = `${name.toLowerCase()}|${subject.toLowerCase()}`;
               if (!groupedSessions[key]) groupedSessions[key] = [];
               groupedSessions[key].push(r);
@@ -266,7 +260,6 @@ export const ResultsView: React.FC = () => {
       let sessions = Object.keys(groupedSessions).map(key => {
           const items = groupedSessions[key];
           
-          // Fallback display names from the first response item
           let name = (items[0].targetName || 'Umum').trim();
           let subject = (items[0].targetSubject || 'Umum').trim();
           
@@ -277,47 +270,38 @@ export const ResultsView: React.FC = () => {
 
           let date = '';
           let isHidden = false;
+          let hiddenQuestionIds: string[] = [];
 
           if (activeTab === 'facilitator') {
-              // SMART METADATA LOOKUP
-              // 1. Find all configured facilitators that match this Name & Subject (case-insensitive & trimmed)
               const matchingFacs = training.facilitators.filter(f => 
                   f.name.trim().toLowerCase() === name.toLowerCase() && 
                   f.subject.trim().toLowerCase() === subject.toLowerCase()
               );
 
-              // 2. Prioritize the entry that has a sessionDate set
               const bestMatch = matchingFacs.find(f => f.sessionDate) || matchingFacs[0];
 
               if (bestMatch) {
-                  // Use the Canonical Name from metadata (e.g. use "Dr. Sri" instead of "dr. sri")
                   name = bestMatch.name;
                   subject = bestMatch.subject;
                   date = bestMatch.sessionDate;
                   isHidden = !!bestMatch.isHidden;
+                  hiddenQuestionIds = bestMatch.hiddenQuestionIds || [];
               }
           }
           const overall = calculateOverall(items, effectiveQuestions);
-          return { name, subject, date, items, overall, isHidden };
+          return { name, subject, date, items, overall, isHidden, hiddenQuestionIds };
       });
 
-      // FILTER HIDDEN SESSIONS
-      // Admins (Regular & Super) see hidden items as dimmed (to allow toggling back)
-      // Guests do NOT see hidden items
       if (isGuest) {
           sessions = sessions.filter(s => !s.isHidden);
       }
 
       sessions.sort((a, b) => {
           if (activeTab === 'process') return 0;
-          
-          // Sort Logic: Order -> Date
           const facA = training.facilitators.find(f => f.name.trim().toLowerCase() === a.name.trim().toLowerCase() && f.subject.trim().toLowerCase() === a.subject.trim().toLowerCase());
           const facB = training.facilitators.find(f => f.name.trim().toLowerCase() === b.name.trim().toLowerCase() && f.subject.trim().toLowerCase() === b.subject.trim().toLowerCase());
-          
           const orderA = facA?.order || 0;
           const orderB = facB?.order || 0;
-
           if (orderA !== orderB) return orderA - orderB;
           if (a.date && b.date) {
               if (a.date < b.date) return -1;
@@ -341,7 +325,7 @@ export const ResultsView: React.FC = () => {
               let sessionTotalScore = 0;
               let sessionMetricCount = 0;
               effectiveQuestions.forEach(q => {
-                  if (q.type !== 'text') {
+                  if (q.type !== 'text' && (!session.hiddenQuestionIds || !session.hiddenQuestionIds.includes(q.id))) {
                       const valid = session.items.filter(r => typeof r.answers[q.id] === 'number');
                       if (valid.length > 0) {
                           const sum = valid.reduce((acc, curr) => acc + (curr.answers[q.id] as number), 0);
@@ -366,17 +350,14 @@ export const ResultsView: React.FC = () => {
       return { grandAvg, grandAvgLabel, grandAvgColor };
   }, [flatSessions, effectiveQuestions, activeTab]);
 
-  // --- 4. HANDLERS ---
   const handleInitiateDelete = (name: string) => { setTargetToDelete(name); setDeletePassword(''); setIsDeleteModalOpen(true); };
   
-  // UPDATED: handleDeleteConfirm with Case-Insensitive logic for local state
   const handleDeleteConfirm = async () => { 
       if (deletePassword !== sysDeletePass) { alert("Kata sandi salah!"); return; } 
       if (trainingId && targetToDelete) { 
           setIsDeleting(true); 
           try { 
               await deleteFacilitatorResponses(trainingId, targetToDelete); 
-              
               const targetLower = targetToDelete.trim().toLowerCase();
               const updatedResponses = responses.filter(r => 
                   !(r.type === 'facilitator' && r.targetName?.trim().toLowerCase() === targetLower)
@@ -392,196 +373,122 @@ export const ResultsView: React.FC = () => {
       } 
   };
 
-  const handleToggleSelectVariable = (id: string) => { const newSet = new Set(selectedVarIds); if (newSet.has(id)) newSet.delete(id); else newSet.add(id); setSelectedVarIds(newSet); };
-  const handleDeleteVariablesConfirm = async () => { if (varDeletePassword !== sysDeletePass) { alert("Kata sandi salah!"); return; } if (!training) return; setIsDeleting(true); try { const updatedTraining = { ...training }; if (activeTab === 'facilitator') { updatedTraining.facilitatorQuestions = updatedTraining.facilitatorQuestions.filter(q => !selectedVarIds.has(q.id)); } else { updatedTraining.processQuestions = updatedTraining.processQuestions.filter(q => !selectedVarIds.has(q.id)); } await saveTraining(updatedTraining); setTraining(updatedTraining); setIsVarDeleteModalOpen(false); setIsManageMode(false); setSelectedVarIds(new Set()); setVarDeletePassword(''); } catch (error) { console.error("Failed to delete variables", error); alert("Gagal menghapus variabel."); } finally { setIsDeleting(false); } };
+  // --- VARIABLE SELECTION LOGIC ---
+  const handleToggleSelectVariable = (qId: string, sessionKey: string) => { 
+      const newSet = new Set(selectedVarIds); 
+      let key = '';
+      
+      if (scopeMode === 'global') {
+          key = `GLOBAL:${qId}`;
+          // If in global mode, ensure specific session keys are removed or handled? 
+          // Simpler: Just track question ID logic visually.
+          // Correct implementation: Global uses just ID concept, but we store it uniquely
+      } else {
+          key = `SESSION:${sessionKey}:${qId}`;
+      }
+
+      if (newSet.has(key)) newSet.delete(key); 
+      else newSet.add(key); 
+      
+      setSelectedVarIds(newSet); 
+  };
+
+  const isVariableSelected = (qId: string, sessionKey: string) => {
+      if (scopeMode === 'global') {
+          return selectedVarIds.has(`GLOBAL:${qId}`);
+      } else {
+          return selectedVarIds.has(`SESSION:${sessionKey}:${qId}`);
+      }
+  };
+
+  // --- DELETE VARIABLES LOGIC ---
+  const handleDeleteVariablesConfirm = async () => { 
+      if (varDeletePassword !== sysDeletePass) { alert("Kata sandi salah!"); return; } 
+      if (!training) return; 
+      setIsDeleting(true); 
+      
+      try { 
+          if (scopeMode === 'global') {
+              // GLOBAL DELETE (From Training Config)
+              // Extract pure QIDs from keys "GLOBAL:xyz"
+              const idsToDelete = new Set<string>();
+              selectedVarIds.forEach(k => {
+                  if (k.startsWith('GLOBAL:')) idsToDelete.add(k.split(':')[1]);
+              });
+
+              const updatedTraining = { ...training }; 
+              if (activeTab === 'facilitator') { 
+                  updatedTraining.facilitatorQuestions = updatedTraining.facilitatorQuestions.filter(q => !idsToDelete.has(q.id)); 
+              } else { 
+                  updatedTraining.processQuestions = updatedTraining.processQuestions.filter(q => !idsToDelete.has(q.id)); 
+              } 
+              await saveTraining(updatedTraining); 
+              setTraining(updatedTraining); 
+          
+          } else {
+              // SESSION SPECIFIC HIDE
+              // Group by Session Key first
+              const sessionMap: Record<string, string[]> = {};
+              
+              selectedVarIds.forEach(k => {
+                  if (k.startsWith('SESSION:')) {
+                      const parts = k.split(':'); // SESSION, keyName|Subject, qId
+                      const sessKey = parts[1]; // name|subject
+                      const qId = parts[2];
+                      
+                      if (!sessionMap[sessKey]) sessionMap[sessKey] = [];
+                      sessionMap[sessKey].push(qId);
+                  }
+              });
+
+              // Process each session
+              for (const [sessKey, qIds] of Object.entries(sessionMap)) {
+                  const [name, subject] = sessKey.split('|');
+                  // We need to find the correct capitalization? 
+                  // Service handles case-insensitivity, but passing "name" from key (lowercase) might be tricky if we didn't store original.
+                  // Wait, flatSessions key is lowercase.
+                  // We need to match with existing facilitator.
+                  // Better: pass the stored key parts to service, let service handle lookup.
+                  // Service update: hideFacilitatorQuestions handles trim & lowercase.
+                  
+                  await hideFacilitatorQuestions(training.id, name, subject, qIds);
+              }
+              
+              // Refresh training data
+              const refreshedTraining = await getTrainingById(training.id);
+              if (refreshedTraining) setTraining(refreshedTraining);
+          }
+
+          setIsVarDeleteModalOpen(false); 
+          setIsManageMode(false); 
+          setSelectedVarIds(new Set()); 
+          setVarDeletePassword(''); 
+          setScopeMode('global'); // Reset default
+      } catch (error) { 
+          console.error("Failed to delete variables", error); 
+          alert("Gagal memproses variabel."); 
+      } finally { 
+          setIsDeleting(false); 
+      } 
+  };
+
+  // ... (Rest of existing handlers like Restore, Rename, etc. - mostly unchanged) ...
   const handleInitiateRestore = () => { if (!training || orphanedQuestionIds.length === 0) return; const configs: RestoreConfigItem[] = orphanedQuestionIds.map(id => { let inferredType: QuestionType = 'star'; const sample = filteredResponses.find(r => r.answers[id] !== undefined); if (sample) { const val = sample.answers[id]; if (typeof val === 'string') inferredType = 'text'; else if (typeof val === 'number') inferredType = val > 5 ? 'slider' : 'star'; } return { id, label: '', type: inferredType, originalInferredType: inferredType }; }); setRestoreConfigs(configs); setIsRestoreModalOpen(true); };
   const handleUpdateRestoreConfig = (index: number, field: keyof RestoreConfigItem, value: any) => { const newConfigs = [...restoreConfigs]; newConfigs[index] = { ...newConfigs[index], [field]: value }; setRestoreConfigs(newConfigs); };
   const handleMoveUp = (index: number) => { if (index === 0) return; const newConfigs = [...restoreConfigs]; [newConfigs[index - 1], newConfigs[index]] = [newConfigs[index], newConfigs[index - 1]]; setRestoreConfigs(newConfigs); };
   const handleMoveDown = (index: number) => { if (index === restoreConfigs.length - 1) return; const newConfigs = [...restoreConfigs]; [newConfigs[index], newConfigs[index + 1]] = [newConfigs[index + 1], newConfigs[index]]; setRestoreConfigs(newConfigs); };
   const handleRemoveRestoreConfig = (index: number) => { if(confirm("Hapus variabel ini?")) { const newConfigs = [...restoreConfigs]; newConfigs.splice(index, 1); setRestoreConfigs(newConfigs); } };
   const handleExecuteRestore = async () => { if (!training) return; const missingLabels = restoreConfigs.some(c => !c.label.trim()); if (missingLabels) { alert("Isi nama variabel."); return; } setIsRestoring(true); try { const restoredQuestions: Question[] = restoreConfigs.map(cfg => ({ id: cfg.id, label: cfg.label, type: cfg.type })); const updatedTraining = { ...training }; if (activeTab === 'facilitator') updatedTraining.facilitatorQuestions = [...updatedTraining.facilitatorQuestions, ...restoredQuestions]; else updatedTraining.processQuestions = [...updatedTraining.processQuestions, ...restoredQuestions]; await saveTraining(updatedTraining); setTraining(updatedTraining); setShowRestoredData(false); setIsRestoreModalOpen(false); alert("Berhasil."); } catch (error) { alert("Error."); } finally { setIsRestoring(false); } };
-
-  // --- RENAME HANDLERS (SUPERADMIN) ---
-  const handleStartRename = (name: string) => {
-      setRenamingTarget(name);
-      setRenameInput(name);
-  };
-
-  const handleCancelRename = () => {
-      setRenamingTarget(null);
-      setRenameInput('');
-  };
-
-  // UPDATED: handleSaveRename with Case-Insensitive logic for local state
-  const handleSaveRename = async () => {
-      if (!training || !renamingTarget || !renameInput.trim()) return;
-      if (renamingTarget === renameInput.trim()) {
-          handleCancelRename();
-          return;
-      }
-
-      setIsSavingName(true);
-      try {
-          await renameFacilitator(training.id, renamingTarget, renameInput.trim());
-          
-          // Update Local State (Case Insensitive)
-          const targetLower = renamingTarget.trim().toLowerCase();
-          const updatedTraining = { ...training };
-          updatedTraining.facilitators = updatedTraining.facilitators.map(f => 
-              f.name.trim().toLowerCase() === targetLower ? { ...f, name: renameInput.trim() } : f
-          );
-          setTraining(updatedTraining);
-
-          const updatedResponses = responses.map(r => 
-              r.targetName?.trim().toLowerCase() === targetLower ? { ...r, targetName: renameInput.trim() } : r
-          );
-          setResponses(updatedResponses);
-
-          handleCancelRename();
-      } catch (error) {
-          alert('Gagal mengubah nama. Coba lagi.');
-          console.error(error);
-      } finally {
-          setIsSavingName(false);
-      }
-  };
-
-  // --- EDIT SUBJECT HANDLERS (SUPERADMIN) ---
-  const handleStartSubjectRename = (name: string, subject: string) => {
-      setEditingSubjectKey(`${name}|${subject}`);
-      setSubjectInput(subject);
-  };
-
-  const handleCancelSubjectRename = () => {
-      setEditingSubjectKey(null);
-      setSubjectInput('');
-  };
-
-  // UPDATED: handleSaveSubjectRename with Case-Insensitive logic
-  const handleSaveSubjectRename = async (name: string, oldSubject: string) => {
-      if (!training || !subjectInput.trim()) return;
-      if (subjectInput.trim() === oldSubject) {
-          handleCancelSubjectRename();
-          return;
-      }
-
-      setIsSavingSubject(true);
-      try {
-          await updateFacilitatorSubject(training.id, name, oldSubject, subjectInput.trim());
-
-          // Update Local State (Case Insensitive)
-          const nameLower = name.trim().toLowerCase();
-          const subjectLower = oldSubject.trim().toLowerCase();
-
-          const updatedTraining = { ...training };
-          updatedTraining.facilitators = updatedTraining.facilitators.map(f => 
-              (f.name.trim().toLowerCase() === nameLower && f.subject.trim().toLowerCase() === subjectLower) ? { ...f, subject: subjectInput.trim() } : f
-          );
-          setTraining(updatedTraining);
-
-          const updatedResponses = responses.map(r => 
-              (r.targetName?.trim().toLowerCase() === nameLower && r.targetSubject?.trim().toLowerCase() === subjectLower) ? { ...r, targetSubject: subjectInput.trim() } : r
-          );
-          setResponses(updatedResponses);
-
-          handleCancelSubjectRename();
-      } catch (error) {
-          alert('Gagal mengubah materi. Coba lagi.');
-          console.error(error);
-      } finally {
-          setIsSavingSubject(false);
-      }
-  };
-
-  // --- TOGGLE VISIBILITY HANDLER (SUPERADMIN) ---
-  // UPDATED: handleToggleVisibility with Case-Insensitive logic
-  const handleToggleVisibility = async (name: string, currentHidden: boolean) => {
-      if (!training) return;
-      const confirmMsg = currentHidden 
-          ? `Tampilkan kembali rekap untuk "${name}"?` 
-          : `Sembunyikan rekap untuk "${name}" dari Laporan Evaluasi?`;
-      
-      if (!confirm(confirmMsg)) return;
-
-      try {
-          await toggleFacilitatorVisibility(training.id, name, !currentHidden);
-          
-          // Update Local State (Case Insensitive)
-          const targetLower = name.trim().toLowerCase();
-          const updatedTraining = { ...training };
-          updatedTraining.facilitators = updatedTraining.facilitators.map(f => 
-              f.name.trim().toLowerCase() === targetLower ? { ...f, isHidden: !currentHidden } : f
-          );
-          setTraining(updatedTraining);
-      } catch (error) {
-          alert('Gagal mengubah visibilitas.');
-          console.error(error);
-      }
-  };
-
-  // --- REORDER HANDLERS ---
-  const openReorderModal = () => {
-      if (!training) return;
-      
-      // Group by Name+Subject to get unique list, but we need to track original data structure
-      // Use existing 'flatSessions' logic partially to get the current order
-      
-      const list = flatSessions.map(s => ({
-          key: `${s.name}|${s.subject}`,
-          name: s.name,
-          subject: s.subject
-      }));
-      
-      setReorderList(list);
-      setIsReorderModalOpen(true);
-  };
-
-  const handleMoveFacilitator = (index: number, direction: -1 | 1) => {
-      const newList = [...reorderList];
-      
-      // Boundary Check
-      if (direction === -1 && index === 0) return;
-      if (direction === 1 && index === newList.length - 1) return;
-
-      const targetIndex = index + direction;
-      [newList[index], newList[targetIndex]] = [newList[targetIndex], newList[index]];
-      
-      setReorderList(newList);
-  };
-
-  const saveFacilitatorOrder = async () => {
-      if (!training) return;
-      setIsSavingOrder(true);
-      try {
-          const updatedFacilitators = [...training.facilitators];
-          
-          // Loop through reordered list and update order in original array
-          reorderList.forEach((item, index) => {
-              // 1-based order for human readability, though array is 0-based
-              const newOrder = index + 1;
-              
-              // Find all facilitators matching this Name+Subject group (to handle merged data)
-              // We must update ALL matching entries so they stay together
-              updatedFacilitators.forEach(f => {
-                  if (f.name.trim().toLowerCase() === item.name.trim().toLowerCase() && 
-                      f.subject.trim().toLowerCase() === item.subject.trim().toLowerCase()) {
-                      f.order = newOrder;
-                  }
-              });
-          });
-
-          await updateFacilitatorsOrder(training.id, updatedFacilitators);
-          
-          // Update Local State
-          setTraining({...training, facilitators: updatedFacilitators});
-          setIsReorderModalOpen(false);
-      } catch (error) {
-          alert("Gagal menyimpan urutan.");
-          console.error(error);
-      } finally {
-          setIsSavingOrder(false);
-      }
-  };
+  const handleStartRename = (name: string) => { setRenamingTarget(name); setRenameInput(name); };
+  const handleCancelRename = () => { setRenamingTarget(null); setRenameInput(''); };
+  const handleSaveRename = async () => { if (!training || !renamingTarget || !renameInput.trim()) return; if (renamingTarget === renameInput.trim()) { handleCancelRename(); return; } setIsSavingName(true); try { await renameFacilitator(training.id, renamingTarget, renameInput.trim()); const targetLower = renamingTarget.trim().toLowerCase(); const updatedTraining = { ...training }; updatedTraining.facilitators = updatedTraining.facilitators.map(f => f.name.trim().toLowerCase() === targetLower ? { ...f, name: renameInput.trim() } : f); setTraining(updatedTraining); const updatedResponses = responses.map(r => r.targetName?.trim().toLowerCase() === targetLower ? { ...r, targetName: renameInput.trim() } : r); setResponses(updatedResponses); handleCancelRename(); } catch (error) { alert('Gagal mengubah nama. Coba lagi.'); console.error(error); } finally { setIsSavingName(false); } };
+  const handleStartSubjectRename = (name: string, subject: string) => { setEditingSubjectKey(`${name}|${subject}`); setSubjectInput(subject); };
+  const handleCancelSubjectRename = () => { setEditingSubjectKey(null); setSubjectInput(''); };
+  const handleSaveSubjectRename = async (name: string, oldSubject: string) => { if (!training || !subjectInput.trim()) return; if (subjectInput.trim() === oldSubject) { handleCancelSubjectRename(); return; } setIsSavingSubject(true); try { await updateFacilitatorSubject(training.id, name, oldSubject, subjectInput.trim()); const nameLower = name.trim().toLowerCase(); const subjectLower = oldSubject.trim().toLowerCase(); const updatedTraining = { ...training }; updatedTraining.facilitators = updatedTraining.facilitators.map(f => (f.name.trim().toLowerCase() === nameLower && f.subject.trim().toLowerCase() === subjectLower) ? { ...f, subject: subjectInput.trim() } : f); setTraining(updatedTraining); const updatedResponses = responses.map(r => (r.targetName?.trim().toLowerCase() === nameLower && r.targetSubject?.trim().toLowerCase() === subjectLower) ? { ...r, targetSubject: subjectInput.trim() } : r); setResponses(updatedResponses); handleCancelSubjectRename(); } catch (error) { alert('Gagal mengubah materi. Coba lagi.'); console.error(error); } finally { setIsSavingSubject(false); } };
+  const handleToggleVisibility = async (name: string, currentHidden: boolean) => { if (!training) return; const confirmMsg = currentHidden ? `Tampilkan kembali rekap untuk "${name}"?` : `Sembunyikan rekap untuk "${name}" dari Laporan Evaluasi?`; if (!confirm(confirmMsg)) return; try { await toggleFacilitatorVisibility(training.id, name, !currentHidden); const targetLower = name.trim().toLowerCase(); const updatedTraining = { ...training }; updatedTraining.facilitators = updatedTraining.facilitators.map(f => f.name.trim().toLowerCase() === targetLower ? { ...f, isHidden: !currentHidden } : f); setTraining(updatedTraining); } catch (error) { alert('Gagal mengubah visibilitas.'); console.error(error); } };
+  const openReorderModal = () => { if (!training) return; const list = flatSessions.map(s => ({ key: `${s.name}|${s.subject}`, name: s.name, subject: s.subject })); setReorderList(list); setIsReorderModalOpen(true); };
+  const handleMoveFacilitator = (index: number, direction: -1 | 1) => { const newList = [...reorderList]; if (direction === -1 && index === 0) return; if (direction === 1 && index === newList.length - 1) return; const targetIndex = index + direction; [newList[index], newList[targetIndex]] = [newList[targetIndex], newList[index]]; setReorderList(newList); };
+  const saveFacilitatorOrder = async () => { if (!training) return; setIsSavingOrder(true); try { const updatedFacilitators = [...training.facilitators]; reorderList.forEach((item, index) => { const newOrder = index + 1; updatedFacilitators.forEach(f => { if (f.name.trim().toLowerCase() === item.name.trim().toLowerCase() && f.subject.trim().toLowerCase() === item.subject.trim().toLowerCase()) { f.order = newOrder; } }); }); await updateFacilitatorsOrder(training.id, updatedFacilitators); setTraining({...training, facilitators: updatedFacilitators}); setIsReorderModalOpen(false); } catch (error) { alert("Gagal menyimpan urutan."); console.error(error); } finally { setIsSavingOrder(false); } };
 
   if (!training) return <div className="p-8 text-center text-slate-500">Memuat Laporan...</div>;
 
@@ -613,7 +520,6 @@ export const ResultsView: React.FC = () => {
             </div>
             
             <div className="flex items-center gap-3 self-start md:self-center">
-                 {/* ADMIN TOOLS */}
                  {!isGuest && (
                      <div className="flex items-center gap-2">
                         {activeTab === 'facilitator' && (
@@ -626,7 +532,7 @@ export const ResultsView: React.FC = () => {
                             </button>
                         )}
                         <button
-                            onClick={() => { setIsManageMode(!isManageMode); setSelectedVarIds(new Set()); }}
+                            onClick={() => { setIsManageMode(!isManageMode); setSelectedVarIds(new Set()); setScopeMode('global'); }}
                             className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-2 border ${isManageMode ? 'bg-red-50 border-red-200 text-red-600' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
                         >
                             <Settings2 size={16}/>
@@ -654,19 +560,14 @@ export const ResultsView: React.FC = () => {
       </div>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        
-        {/* --- RECOVERY BANNER (HIDE FOR GUEST) --- */}
+        {/* --- RECOVERY BANNER --- */}
         {orphanedQuestionIds.length > 0 && !isGuest && (
             <div className="mb-6 bg-amber-50 border border-amber-200 rounded-xl p-4 flex flex-col sm:flex-row items-center justify-between gap-4 animate-in fade-in slide-in-from-top-4 shadow-sm">
                 <div className="flex items-start gap-3">
-                    <div className="bg-amber-100 p-2 rounded-full text-amber-600 shrink-0">
-                        <AlertTriangle size={24} />
-                    </div>
+                    <div className="bg-amber-100 p-2 rounded-full text-amber-600 shrink-0"><AlertTriangle size={24} /></div>
                     <div>
                         <h3 className="font-bold text-amber-800 text-sm">Terdeteksi Data Lama / Terhapus</h3>
-                        <p className="text-xs text-amber-700 mt-1 leading-relaxed">
-                            Sistem mendeteksi adanya data penilaian responden untuk <strong>{orphanedQuestionIds.length} variabel pertanyaan</strong> yang telah Anda hapus atau ubah dari konfigurasi pelatihan ini.
-                        </p>
+                        <p className="text-xs text-amber-700 mt-1 leading-relaxed">Sistem mendeteksi data penilaian untuk <strong>{orphanedQuestionIds.length} variabel</strong> yang telah dihapus.</p>
                     </div>
                 </div>
                 <div className="flex gap-2 shrink-0">
@@ -676,27 +577,17 @@ export const ResultsView: React.FC = () => {
             </div>
         )}
 
-        {/* GRAND AVERAGE SUMMARY CARD (FACILITATOR ONLY) */}
+        {/* --- GRAND SUMMARY --- */}
         {activeTab === 'facilitator' && grandStats.grandAvg > 0 && (
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 mb-6 flex flex-col md:flex-row items-center justify-between gap-4 relative overflow-hidden">
                 <div className="absolute top-0 left-0 w-1.5 h-full bg-indigo-500"></div>
                 <div className="flex items-center gap-4 z-10">
-                    <div className="bg-indigo-50 p-3 rounded-full text-indigo-600">
-                        <Award size={32} />
-                    </div>
-                    <div>
-                        <h2 className="text-lg font-bold text-slate-800">Rata-rata Keseluruhan</h2>
-                        <p className="text-slate-500 text-sm">Akumulasi nilai akhir dari seluruh sesi fasilitator.</p>
-                    </div>
+                    <div className="bg-indigo-50 p-3 rounded-full text-indigo-600"><Award size={32} /></div>
+                    <div><h2 className="text-lg font-bold text-slate-800">Rata-rata Keseluruhan</h2><p className="text-slate-500 text-sm">Akumulasi nilai akhir dari seluruh sesi fasilitator.</p></div>
                 </div>
                 <div className="flex items-center gap-6 z-10 bg-slate-50 px-6 py-3 rounded-xl border border-slate-100">
-                     <div className="text-right">
-                        <div className="text-3xl font-bold text-slate-900 leading-none">{grandStats.grandAvg}</div>
-                        <div className="text-[10px] font-bold text-slate-400 mt-1 uppercase tracking-wider">Nilai Rata-rata</div>
-                     </div>
-                     <div className={`px-4 py-1.5 rounded-lg border-2 font-bold text-xs uppercase tracking-wide shadow-sm ${grandStats.grandAvgColor}`}>
-                        {grandStats.grandAvgLabel}
-                     </div>
+                     <div className="text-right"><div className="text-3xl font-bold text-slate-900 leading-none">{grandStats.grandAvg}</div><div className="text-[10px] font-bold text-slate-400 mt-1 uppercase tracking-wider">Nilai Rata-rata</div></div>
+                     <div className={`px-4 py-1.5 rounded-lg border-2 font-bold text-xs uppercase tracking-wide shadow-sm ${grandStats.grandAvgColor}`}>{grandStats.grandAvgLabel}</div>
                 </div>
             </div>
         )}
@@ -726,46 +617,21 @@ export const ResultsView: React.FC = () => {
                                     <div className="flex flex-col w-full">
                                         <div className="flex items-center gap-2">
                                             {renamingTarget === session.name && activeTab === 'facilitator' ? (
-                                                /* RENAME INPUT MODE */
                                                 <div className="flex items-center gap-2 w-full max-w-md animate-in fade-in">
-                                                    <input 
-                                                        type="text" 
-                                                        value={renameInput} 
-                                                        onChange={e => setRenameInput(e.target.value)} 
-                                                        className="border border-indigo-300 rounded px-2 py-1 text-sm font-bold text-slate-800 w-full focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                                                        autoFocus
-                                                    />
+                                                    <input type="text" value={renameInput} onChange={e => setRenameInput(e.target.value)} className="border border-indigo-300 rounded px-2 py-1 text-sm font-bold text-slate-800 w-full focus:outline-none focus:ring-2 focus:ring-indigo-500" autoFocus />
                                                     <button onClick={handleSaveRename} disabled={isSavingName} className="bg-emerald-600 text-white p-1 rounded hover:bg-emerald-700"><Check size={16}/></button>
                                                     <button onClick={handleCancelRename} className="bg-slate-300 text-slate-700 p-1 rounded hover:bg-slate-400"><X size={16}/></button>
                                                 </div>
                                             ) : (
-                                                /* NORMAL DISPLAY MODE */
                                                 <>
                                                     <h3 className="font-bold text-slate-800 text-base flex items-center gap-2">
                                                         {activeTab === 'process' ? 'Hasil Evaluasi Penyelenggaraan' : session.name}
-                                                        {isHidden && (
-                                                            <span className="text-[9px] bg-red-100 text-red-600 px-2 py-0.5 rounded-full border border-red-200 font-bold uppercase tracking-wide">
-                                                                Disembunyikan
-                                                            </span>
-                                                        )}
+                                                        {isHidden && <span className="text-[9px] bg-red-100 text-red-600 px-2 py-0.5 rounded-full border border-red-200 font-bold uppercase tracking-wide">Disembunyikan</span>}
                                                     </h3>
-                                                    {/* SUPERADMIN ONLY CONTROLS: EDIT & TOGGLE VISIBILITY */}
                                                     {isSuperAdmin && activeTab === 'facilitator' && (
                                                         <div className="flex items-center gap-1">
-                                                            <button 
-                                                                onClick={() => handleStartRename(session.name)} 
-                                                                className="text-slate-300 hover:text-indigo-600 hover:bg-indigo-50 p-1 rounded transition-colors"
-                                                                title="Edit Nama Fasilitator"
-                                                            >
-                                                                <Edit2 size={14}/>
-                                                            </button>
-                                                            <button 
-                                                                onClick={() => handleToggleVisibility(session.name, !!isHidden)} 
-                                                                className={`p-1 rounded transition-colors ${isHidden ? 'text-red-400 hover:text-red-600 hover:bg-red-50' : 'text-slate-300 hover:text-indigo-600 hover:bg-indigo-50'}`}
-                                                                title={isHidden ? "Tampilkan Rekap Ini" : "Sembunyikan Rekap Ini"}
-                                                            >
-                                                                {isHidden ? <EyeOff size={14}/> : <Eye size={14}/>}
-                                                            </button>
+                                                            <button onClick={() => handleStartRename(session.name)} className="text-slate-300 hover:text-indigo-600 hover:bg-indigo-50 p-1 rounded transition-colors" title="Edit Nama Fasilitator"><Edit2 size={14}/></button>
+                                                            <button onClick={() => handleToggleVisibility(session.name, !!isHidden)} className={`p-1 rounded transition-colors ${isHidden ? 'text-red-400 hover:text-red-600 hover:bg-red-50' : 'text-slate-300 hover:text-indigo-600 hover:bg-indigo-50'}`} title={isHidden ? "Tampilkan Rekap Ini" : "Sembunyikan Rekap Ini"}>{isHidden ? <EyeOff size={14}/> : <Eye size={14}/>}</button>
                                                         </div>
                                                     )}
                                                 </>
@@ -774,31 +640,15 @@ export const ResultsView: React.FC = () => {
                                         <div className="flex items-center gap-2 text-xs text-slate-500 font-medium">
                                             {activeTab === 'facilitator' && (
                                                 isEditingSubject ? (
-                                                    // EDIT SUBJECT MODE
                                                     <div className="flex items-center gap-2 animate-in fade-in">
-                                                        <input 
-                                                            type="text" 
-                                                            value={subjectInput} 
-                                                            onChange={e => setSubjectInput(e.target.value)} 
-                                                            className="border border-indigo-300 rounded px-2 py-0.5 text-xs text-slate-800 w-full min-w-[200px] focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                                                            autoFocus
-                                                        />
+                                                        <input type="text" value={subjectInput} onChange={e => setSubjectInput(e.target.value)} className="border border-indigo-300 rounded px-2 py-0.5 text-xs text-slate-800 w-full min-w-[200px] focus:outline-none focus:ring-2 focus:ring-indigo-500" autoFocus />
                                                         <button onClick={() => handleSaveSubjectRename(session.name, session.subject)} disabled={isSavingSubject} className="bg-emerald-600 text-white p-0.5 rounded hover:bg-emerald-700"><Check size={14}/></button>
                                                         <button onClick={handleCancelSubjectRename} className="bg-slate-300 text-slate-700 p-0.5 rounded hover:bg-slate-400"><X size={14}/></button>
                                                     </div>
                                                 ) : (
-                                                    // DISPLAY SUBJECT MODE
                                                     <span className="bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded border border-indigo-100 flex items-center gap-1 group/subject">
                                                         {session.subject}
-                                                        {isSuperAdmin && (
-                                                            <button 
-                                                                onClick={() => handleStartSubjectRename(session.name, session.subject)} 
-                                                                className="text-indigo-300 hover:text-indigo-800 ml-1 opacity-0 group-hover/subject:opacity-100 transition-opacity"
-                                                                title="Edit Materi (Superadmin)"
-                                                            >
-                                                                <Edit2 size={10}/>
-                                                            </button>
-                                                        )}
+                                                        {isSuperAdmin && (<button onClick={() => handleStartSubjectRename(session.name, session.subject)} className="text-indigo-300 hover:text-indigo-800 ml-1 opacity-0 group-hover/subject:opacity-100 transition-opacity" title="Edit Materi (Superadmin)"><Edit2 size={10}/></button>)}
                                                     </span>
                                                 )
                                             )}
@@ -807,7 +657,6 @@ export const ResultsView: React.FC = () => {
                                         </div>
                                     </div>
                                 </div>
-                                {/* HIDE DELETE BUTTON FOR GUEST */}
                                 {activeTab === 'facilitator' && !isGuest && (<button onClick={() => handleInitiateDelete(session.name)} className="p-1.5 text-slate-400 hover:text-red-500 bg-white border border-slate-200 hover:bg-red-50 rounded transition-colors" title="Hapus Nilai Fasilitator Ini"><Trash2 size={16}/></button>)}
                              </div>
 
@@ -824,7 +673,7 @@ export const ResultsView: React.FC = () => {
                                     </div>
                                 </div>
 
-                                {/* IF PROCESS TAB: SHOW TABLE VIEW */}
+                                {/* TABLE VIEW (PROCESS) */}
                                 {activeTab === 'process' ? (
                                     <div className="overflow-x-auto border border-slate-200 rounded-xl">
                                         <table className="w-full text-sm text-left">
@@ -842,27 +691,17 @@ export const ResultsView: React.FC = () => {
                                                 {effectiveQuestions.filter(q => q.type !== 'text').map((q, qIdx) => {
                                                     const dist = calculateDistribution(session.items, q.id, q.type);
                                                     const isRestored = q.label.includes('(Data Lama)');
-                                                    const isSelected = selectedVarIds.has(q.id);
-                                                    
-                                                    // FIND HIGHEST VALUE
-                                                    const valK = parseFloat(dist.k);
-                                                    const valS = parseFloat(dist.s);
-                                                    const valB = parseFloat(dist.b);
-                                                    const valSb = parseFloat(dist.sb);
+                                                    const isSelected = isVariableSelected(q.id, sessionKey);
+                                                    const valK = parseFloat(dist.k); const valS = parseFloat(dist.s); const valB = parseFloat(dist.b); const valSb = parseFloat(dist.sb);
                                                     const maxVal = Math.max(valK, valS, valB, valSb);
-                                                    
-                                                    // Helper class function - MODIFIED: Removed bg-slate-100
                                                     const getStyle = (val: number) => val === maxVal && maxVal > 0 ? 'font-extrabold text-slate-900' : 'text-slate-500';
 
                                                     return (
-                                                        <tr key={q.id} className={`hover:bg-slate-50 transition ${isRestored ? 'bg-amber-50/50' : ''} ${isSelected ? 'bg-red-50' : ''}`} onClick={() => { if(isManageMode && !isRestored) handleToggleSelectVariable(q.id); }}>
+                                                        <tr key={q.id} className={`hover:bg-slate-50 transition ${isRestored ? 'bg-amber-50/50' : ''} ${isSelected ? 'bg-red-50' : ''}`} onClick={() => { if(isManageMode && !isRestored) handleToggleSelectVariable(q.id, sessionKey); }}>
                                                             <td className="px-4 py-3 text-center text-slate-500 font-mono text-xs">
                                                                 {isManageMode && !isRestored ? (isSelected ? <CheckSquare className="mx-auto text-red-500" size={16}/> : <Square className="mx-auto text-slate-300" size={16}/>) : (qIdx + 1)}
                                                             </td>
-                                                            <td className="px-4 py-3 text-slate-800 font-medium">
-                                                                {q.label}
-                                                                {isRestored && <span className="ml-2 text-[10px] text-amber-600 bg-amber-100 px-1.5 py-0.5 rounded border border-amber-200">Data Lama</span>}
-                                                            </td>
+                                                            <td className="px-4 py-3 text-slate-800 font-medium">{q.label}{isRestored && <span className="ml-2 text-[10px] text-amber-600 bg-amber-100 px-1.5 py-0.5 rounded border border-amber-200">Data Lama</span>}</td>
                                                             <td className={`px-4 py-3 text-center border-l border-slate-50 ${getStyle(valK)}`}>{dist.k}%</td>
                                                             <td className={`px-4 py-3 text-center border-l border-slate-50 ${getStyle(valS)}`}>{dist.s}%</td>
                                                             <td className={`px-4 py-3 text-center border-l border-slate-50 ${getStyle(valB)}`}>{dist.b}%</td>
@@ -872,36 +711,35 @@ export const ResultsView: React.FC = () => {
                                                 })}
                                             </tbody>
                                         </table>
-                                        
-                                        {/* Show Text Answers below Table for Process */}
                                         <div className="mt-6 px-4 pb-4">
                                             {effectiveQuestions.filter(q => q.type === 'text').map(q => (
                                                 <div key={q.id} className="mb-4">
                                                     <h4 className="font-bold text-sm text-slate-700 mb-2 flex items-center gap-2"><Quote size={14} className="text-indigo-500"/> {q.label}</h4>
                                                     <div className="bg-slate-50 rounded-lg p-3 border border-slate-100 space-y-2 max-h-40 overflow-y-auto custom-scrollbar">
-                                                        {getTextAnswers(session.items, q.id).length > 0 ? (
-                                                            getTextAnswers(session.items, q.id).map((ans, aIdx) => (
-                                                                <p key={aIdx} className="text-xs text-slate-600 italic border-b border-slate-200 last:border-0 pb-1 last:pb-0">"{ans}"</p>
-                                                            ))
-                                                        ) : <span className="text-xs text-slate-400 italic">Tidak ada jawaban.</span>}
+                                                        {getTextAnswers(session.items, q.id).length > 0 ? (getTextAnswers(session.items, q.id).map((ans, aIdx) => (<p key={aIdx} className="text-xs text-slate-600 italic border-b border-slate-200 last:border-0 pb-1 last:pb-0">"{ans}"</p>))) : <span className="text-xs text-slate-400 italic">Tidak ada jawaban.</span>}
                                                     </div>
                                                 </div>
                                             ))}
                                         </div>
                                     </div>
                                 ) : (
-                                    /* FACILITATOR VIEW (GRID CARDS) - UNCHANGED */
+                                    /* GRID VIEW (FACILITATOR) */
                                     <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                                         {effectiveQuestions.map(q => {
+                                            // HIDE IF EXCLUDED (Unless it's restored data or we are in manage mode)
+                                            if (!isManageMode && session.hiddenQuestionIds?.includes(q.id)) return null;
+
                                             const avg = getAverage(session.items, q.id);
                                             const label = getLabel(avg, q.type);
                                             const labelColor = getLabelColor(avg, q.type);
                                             const isRestored = q.label.includes('(Data Lama)');
-                                            const isSelected = selectedVarIds.has(q.id);
+                                            const isSelected = isVariableSelected(q.id, sessionKey);
+                                            const isHidden = session.hiddenQuestionIds?.includes(q.id);
 
                                             return (
-                                            <div key={q.id} className={`bg-white border rounded-lg p-2.5 shadow-sm flex flex-col h-full relative transition-all ${isRestored ? 'border-amber-300 bg-amber-50 ring-1 ring-amber-100' : 'border-slate-100'} ${isManageMode && !isRestored ? 'cursor-pointer hover:border-indigo-300 hover:shadow-md' : ''} ${isSelected ? 'ring-2 ring-red-500 border-red-500 bg-red-50' : ''}`} onClick={() => { if(isManageMode && !isRestored) handleToggleSelectVariable(q.id); }}>
+                                            <div key={q.id} className={`bg-white border rounded-lg p-2.5 shadow-sm flex flex-col h-full relative transition-all ${isRestored ? 'border-amber-300 bg-amber-50 ring-1 ring-amber-100' : 'border-slate-100'} ${isManageMode && !isRestored ? 'cursor-pointer hover:border-indigo-300 hover:shadow-md' : ''} ${isSelected ? 'ring-2 ring-red-500 border-red-500 bg-red-50' : ''} ${isHidden && isManageMode ? 'opacity-50 grayscale' : ''}`} onClick={() => { if(isManageMode && !isRestored) handleToggleSelectVariable(q.id, sessionKey); }}>
                                                 {isManageMode && !isRestored && (<div className="absolute top-2 right-2 z-10">{isSelected ? <CheckSquare className="text-red-500 fill-white" size={20}/> : <Square className="text-slate-300" size={20}/>}</div>)}
+                                                {isHidden && isManageMode && <div className="absolute top-2 left-2 z-10 bg-slate-800 text-white text-[9px] px-1.5 py-0.5 rounded">Disembunyikan</div>}
                                                 <div className="flex items-start justify-between mb-1.5 pr-6"><p className={`text-[11px] font-bold line-clamp-2 h-[28px] leading-snug flex-1 ${isRestored ? 'text-amber-800 italic' : 'text-slate-700'}`} title={q.label}>{q.label}</p>{isRestored && <AlertTriangle size={12} className="text-amber-500 shrink-0 ml-1"/>}</div>
                                                 <div className="mt-auto">{q.type === 'text' ? (<div className="bg-white/50 rounded-lg p-2 max-h-32 overflow-y-auto space-y-2 custom-scrollbar border border-slate-200/50">{getTextAnswers(session.items, q.id).length > 0 ? (getTextAnswers(session.items, q.id).map((ans, idx) => (<div key={idx} className="flex gap-1.5 text-[10px] text-slate-600 leading-relaxed border-b border-slate-100 last:border-0 pb-1 last:pb-0"><Quote size={10} className="text-slate-400 min-w-[10px] mt-0.5" /><p className="italic">{ans}</p></div>))) : ( <span className="text-[10px] text-slate-400">Tidak ada jawaban</span> )}</div>) : (<div className="flex flex-col gap-2"><div className="flex items-center justify-between pt-1"><span className="text-lg font-bold text-slate-800 tracking-tight">{avg}</span><span className={`text-[9px] px-1.5 py-0.5 rounded border font-bold uppercase tracking-wide ${labelColor}`}>{label}</span></div></div>)}</div>
                                             </div>
@@ -917,79 +755,63 @@ export const ResultsView: React.FC = () => {
 
         {/* FLOATING ACTION BAR FOR DELETE VARIABLES */}
         {isManageMode && !isGuest && (
-            <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-white border border-slate-200 shadow-2xl rounded-full px-6 py-3 flex items-center gap-4 z-40 animate-in slide-in-from-bottom-6">
-                <span className="text-sm font-bold text-slate-700">{selectedVarIds.size} Dipilih</span>
-                <div className="h-6 w-px bg-slate-200"></div>
-                <button onClick={() => { setIsManageMode(false); setSelectedVarIds(new Set()); }} className="text-sm font-bold text-slate-500 hover:text-slate-800">Batal</button>
-                <button onClick={() => { if(selectedVarIds.size > 0) { setIsVarDeleteModalOpen(true); setVarDeletePassword(''); } }} disabled={selectedVarIds.size === 0} className="bg-red-600 text-white px-4 py-1.5 rounded-full text-sm font-bold hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"><Trash2 size={16}/> Hapus</button>
+            <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-white border border-slate-200 shadow-2xl rounded-full px-4 py-2 flex flex-col md:flex-row items-center gap-3 z-40 animate-in slide-in-from-bottom-6 w-11/12 md:w-auto">
+                <div className="flex bg-slate-100 p-1 rounded-full">
+                    <button onClick={() => { setScopeMode('global'); setSelectedVarIds(new Set()); }} className={`px-3 py-1.5 rounded-full text-xs font-bold transition ${scopeMode === 'global' ? 'bg-white shadow text-slate-800' : 'text-slate-500'}`}>Global (Semua)</button>
+                    {activeTab === 'facilitator' && (
+                        <button onClick={() => { setScopeMode('session'); setSelectedVarIds(new Set()); }} className={`px-3 py-1.5 rounded-full text-xs font-bold transition ${scopeMode === 'session' ? 'bg-white shadow text-slate-800' : 'text-slate-500'}`}>Per Materi</button>
+                    )}
+                </div>
+                <div className="flex items-center gap-3">
+                    <span className="text-sm font-bold text-slate-700 whitespace-nowrap">{selectedVarIds.size} Dipilih</span>
+                    <button onClick={() => { if(selectedVarIds.size > 0) { setIsVarDeleteModalOpen(true); setVarDeletePassword(''); } }} disabled={selectedVarIds.size === 0} className="bg-red-600 text-white px-4 py-1.5 rounded-full text-sm font-bold hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
+                        <Trash2 size={16}/> {scopeMode === 'global' ? 'Hapus' : 'Sembunyikan'}
+                    </button>
+                    <button onClick={() => { setIsManageMode(false); setSelectedVarIds(new Set()); setScopeMode('global'); }} className="p-2 rounded-full hover:bg-slate-100 text-slate-500"><X size={18}/></button>
+                </div>
             </div>
         )}
         
-        {/* Modals included in existing component (omitted for brevity as they are unchanged) */}
-        {isVarDeleteModalOpen && (<div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm"><div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in-95"><div className="p-6"><div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center mx-auto mb-4"><Trash2 className="text-red-600" size={24}/></div><h3 className="text-center font-bold text-slate-800 text-lg mb-2">Hapus {selectedVarIds.size} Variabel?</h3><p className="text-center text-slate-500 text-sm mb-6">Variabel yang dihapus akan hilang dari laporan ini, namun data penilaian tersimpan dapat dipulihkan nanti melalui menu pemulihan.</p><div className="space-y-3"><div><label className="block text-xs font-bold text-slate-700 uppercase mb-1">Kode Otorisasi (Sandi)</label><div className="relative"><Lock size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/><input type="password" value={varDeletePassword} onChange={(e) => setVarDeletePassword(e.target.value)} className="w-full pl-9 pr-4 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-red-500 focus:outline-none" placeholder="Masukkan sandi..." autoFocus /></div></div><div className="flex gap-2 pt-2"><button onClick={() => { setIsVarDeleteModalOpen(false); setVarDeletePassword(''); }} className="flex-1 py-2.5 bg-slate-100 text-slate-600 font-bold rounded-lg hover:bg-slate-200 transition">Batal</button><button onClick={handleDeleteVariablesConfirm} disabled={isDeleting || !varDeletePassword} className="flex-1 py-2.5 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700 transition disabled:opacity-50 flex items-center justify-center gap-2">{isDeleting ? 'Menghapus...' : 'Hapus'}</button></div></div></div></div></div>)}
-        {isRestoreModalOpen && (<div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm"><div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl overflow-hidden animate-in fade-in zoom-in-95 flex flex-col max-h-[90vh]"><div className="px-6 py-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center"><div className="flex items-center gap-3"><div className="bg-emerald-100 p-2 rounded-full text-emerald-600"><RefreshCw size={20}/></div><div><h3 className="font-bold text-slate-800">Pulihkan Variabel Penilaian</h3><p className="text-xs text-slate-500">Beri nama label yang sesuai dengan data asli sebelum dihapus.</p></div></div><button onClick={() => setIsRestoreModalOpen(false)} className="p-1 hover:bg-slate-200 rounded-full text-slate-400"><X size={20}/></button></div><div className="p-6 overflow-y-auto flex-1"><div className="space-y-4"><div className="bg-amber-50 border border-amber-200 p-3 rounded-lg flex gap-3 text-xs text-amber-800"><AlertTriangle size={16} className="shrink-0 mt-0.5"/><p>Sistem tidak dapat mengembalikan nama variabel secara otomatis. Mohon ketik nama yang sesuai agar data tersaji dengan benar.</p></div><table className="w-full text-left text-sm"><thead className="bg-slate-100 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase"><tr><th className="px-3 py-2 w-16 text-center">Posisi</th><th className="px-3 py-2">ID Data</th><th className="px-3 py-2 w-32">Tipe</th><th className="px-3 py-2">Nama Asli Variabel (Wajib Diisi)</th><th className="px-3 py-2 w-10"></th></tr></thead><tbody className="divide-y divide-slate-100">{restoreConfigs.map((cfg, idx) => (<tr key={cfg.id} className="hover:bg-slate-50"><td className="px-3 py-3"><div className="flex items-center justify-center gap-1"><button onClick={() => handleMoveUp(idx)} disabled={idx === 0} className="p-1 rounded hover:bg-slate-200 text-slate-500 disabled:opacity-30 disabled:hover:bg-transparent"><ArrowUp size={14} /></button><button onClick={() => handleMoveDown(idx)} disabled={idx === restoreConfigs.length - 1} className="p-1 rounded hover:bg-slate-200 text-slate-500 disabled:opacity-30 disabled:hover:bg-transparent"><ArrowDown size={14} /></button></div></td><td className="px-3 py-3 font-mono text-[10px] text-slate-400 select-all" title={cfg.id}>{cfg.id.substring(0,8)}...</td><td className="px-3 py-3"><select value={cfg.type} onChange={(e) => handleUpdateRestoreConfig(idx, 'type', e.target.value)} className="w-full border border-slate-300 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-indigo-500"><option value="star">★ Bintang</option><option value="slider">⸺ Skala</option><option value="text">¶ Teks</option></select>{cfg.type !== cfg.originalInferredType && (<div className="text-[10px] text-amber-600 mt-1">Terdeteksi: {cfg.originalInferredType}</div>)}</td><td className="px-3 py-3"><input type="text" value={cfg.label} onChange={(e) => handleUpdateRestoreConfig(idx, 'label', e.target.value)} className={`w-full border rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-2 ${!cfg.label ? 'border-red-300 ring-red-100 focus:ring-red-200' : 'border-slate-300 focus:ring-indigo-200'}`} placeholder="Ketik Pertanyaan/Variabel..." autoFocus={idx === 0} /></td><td className="px-3 py-3"><button onClick={() => handleRemoveRestoreConfig(idx)} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors" title="Hapus dari daftar pemulihan (Data tidak akan ditampilkan)"><Trash2 size={16} /></button></td></tr>))}</tbody></table></div></div><div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-end gap-3"><button onClick={() => setIsRestoreModalOpen(false)} className="px-4 py-2 text-slate-600 hover:bg-slate-200 rounded-lg font-bold text-sm">Batal</button><button onClick={handleExecuteRestore} disabled={isRestoring} className="px-6 py-2 bg-emerald-600 text-white rounded-lg font-bold text-sm hover:bg-emerald-700 flex items-center gap-2 disabled:opacity-50">{isRestoring ? <RefreshCw size={16} className="animate-spin"/> : <Save size={16}/>} Pulihkan & Simpan Permanen</button></div></div></div>)}
-        {isDeleteModalOpen && (<div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm"><div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in-95"><div className="p-6"><div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center mx-auto mb-4"><Trash2 className="text-red-600" size={24}/></div><h3 className="text-center font-bold text-slate-800 text-lg mb-2">Hapus Hasil Penilaian?</h3><p className="text-center text-slate-500 text-sm mb-6">Anda akan menghapus seluruh data penilaian untuk fasilitator <strong>{targetToDelete}</strong> dalam pelatihan ini. Tindakan ini tidak dapat dibatalkan.</p><div className="space-y-3"><div><label className="block text-xs font-bold text-slate-700 uppercase mb-1">Kode Otorisasi (Sandi)</label><div className="relative"><Lock size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/><input type="password" value={deletePassword} onChange={(e) => setDeletePassword(e.target.value)} className="w-full pl-9 pr-4 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-red-500 focus:outline-none" placeholder="Masukkan sandi..." autoFocus /></div></div><div className="flex gap-2 pt-2"><button onClick={() => { setIsDeleteModalOpen(false); setTargetToDelete(null); }} className="flex-1 py-2.5 bg-slate-100 text-slate-600 font-bold rounded-lg hover:bg-slate-200 transition">Batal</button><button onClick={handleDeleteConfirm} disabled={isDeleting || !deletePassword} className="flex-1 py-2.5 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700 transition disabled:opacity-50 flex items-center justify-center gap-2">{isDeleting ? 'Menghapus...' : 'Hapus Data'}</button></div></div></div></div></div>)}
-
-        {/* --- REORDER FACILITATOR MODAL --- */}
-        {isReorderModalOpen && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in zoom-in-95">
-                <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[80vh]">
-                    <div className="px-6 py-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
-                        <div className="flex items-center gap-3">
-                            <div className="bg-indigo-100 p-2 rounded-full text-indigo-600"><ListOrdered size={20}/></div>
+        {/* DELETE CONFIRM MODAL (UPDATED) */}
+        {isVarDeleteModalOpen && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+                <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in-95">
+                    <div className="p-6">
+                        <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center mx-auto mb-4">
+                            {scopeMode === 'global' ? <Trash2 className="text-red-600" size={24}/> : <EyeOff className="text-red-600" size={24}/>}
+                        </div>
+                        <h3 className="text-center font-bold text-slate-800 text-lg mb-2">
+                            {scopeMode === 'global' ? `Hapus ${selectedVarIds.size} Variabel Permanen?` : `Sembunyikan ${selectedVarIds.size} Variabel?`}
+                        </h3>
+                        <p className="text-center text-slate-500 text-sm mb-6 leading-relaxed">
+                            {scopeMode === 'global' 
+                                ? 'Variabel akan dihapus dari seluruh materi dan laporan ini secara permanen.' 
+                                : 'Variabel hanya akan disembunyikan dari materi/sesi yang dipilih, namun tetap ada di database.'}
+                        </p>
+                        <div className="space-y-3">
                             <div>
-                                <h3 className="font-bold text-slate-800">Atur Posisi Fasilitator</h3>
-                                <p className="text-xs text-slate-500">Urutkan tampilan daftar pada laporan.</p>
+                                <label className="block text-xs font-bold text-slate-700 uppercase mb-1">Kode Otorisasi</label>
+                                <div className="relative">
+                                    <Lock size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
+                                    <input type="password" value={varDeletePassword} onChange={(e) => setVarDeletePassword(e.target.value)} className="w-full pl-9 pr-4 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-red-500 focus:outline-none" placeholder="Masukkan sandi..." autoFocus />
+                                </div>
+                            </div>
+                            <div className="flex gap-2 pt-2">
+                                <button onClick={() => { setIsVarDeleteModalOpen(false); setVarDeletePassword(''); }} className="flex-1 py-2.5 bg-slate-100 text-slate-600 font-bold rounded-lg hover:bg-slate-200 transition">Batal</button>
+                                <button onClick={handleDeleteVariablesConfirm} disabled={isDeleting || !varDeletePassword} className="flex-1 py-2.5 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700 transition disabled:opacity-50 flex items-center justify-center gap-2">
+                                    {isDeleting ? 'Memproses...' : (scopeMode === 'global' ? 'Hapus' : 'Sembunyikan')}
+                                </button>
                             </div>
                         </div>
-                        <button onClick={() => setIsReorderModalOpen(false)} className="p-1 hover:bg-slate-200 rounded-full text-slate-400"><X size={20}/></button>
-                    </div>
-                    
-                    <div className="p-6 overflow-y-auto flex-1 bg-slate-50/50">
-                        <div className="space-y-2">
-                            {reorderList.length === 0 ? (
-                                <p className="text-center text-slate-400 text-sm italic py-4">Tidak ada data fasilitator.</p>
-                            ) : (
-                                reorderList.map((item, idx) => (
-                                    <div key={idx} className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between group hover:border-indigo-300 transition-colors">
-                                        <div className="flex items-center gap-3 overflow-hidden">
-                                            <div className="w-6 h-6 rounded bg-slate-100 flex items-center justify-center text-xs font-bold text-slate-500 shrink-0">{idx + 1}</div>
-                                            <div className="min-w-0">
-                                                <div className="font-bold text-sm text-slate-800 truncate">{item.name}</div>
-                                                <div className="text-xs text-slate-500 truncate">{item.subject}</div>
-                                            </div>
-                                        </div>
-                                        <div className="flex items-center gap-1 shrink-0">
-                                            <button 
-                                                onClick={() => handleMoveFacilitator(idx, -1)} 
-                                                disabled={idx === 0} 
-                                                className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-indigo-600 disabled:opacity-30 disabled:hover:bg-transparent"
-                                            >
-                                                <ArrowUp size={18}/>
-                                            </button>
-                                            <button 
-                                                onClick={() => handleMoveFacilitator(idx, 1)} 
-                                                disabled={idx === reorderList.length - 1} 
-                                                className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-indigo-600 disabled:opacity-30 disabled:hover:bg-transparent"
-                                            >
-                                                <ArrowDown size={18}/>
-                                            </button>
-                                        </div>
-                                    </div>
-                                ))
-                            )}
-                        </div>
-                    </div>
-
-                    <div className="p-4 border-t border-slate-100 bg-white flex justify-end gap-3">
-                        <button onClick={() => setIsReorderModalOpen(false)} className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg font-bold text-sm">Batal</button>
-                        <button onClick={saveFacilitatorOrder} disabled={isSavingOrder} className="px-6 py-2 bg-indigo-600 text-white rounded-lg font-bold text-sm hover:bg-indigo-700 flex items-center gap-2 disabled:opacity-70">
-                            {isSavingOrder ? <RefreshCw size={16} className="animate-spin"/> : <Save size={16}/>} Simpan Urutan
-                        </button>
                     </div>
                 </div>
             </div>
         )}
+
+        {/* ... Other modals (Reorder, Restore, Rename) unchanged ... */}
+        {isRestoreModalOpen && (<div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm"><div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl overflow-hidden animate-in fade-in zoom-in-95 flex flex-col max-h-[90vh]"><div className="px-6 py-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center"><div className="flex items-center gap-3"><div className="bg-emerald-100 p-2 rounded-full text-emerald-600"><RefreshCw size={20}/></div><div><h3 className="font-bold text-slate-800">Pulihkan Variabel Penilaian</h3><p className="text-xs text-slate-500">Beri nama label yang sesuai dengan data asli sebelum dihapus.</p></div></div><button onClick={() => setIsRestoreModalOpen(false)} className="p-1 hover:bg-slate-200 rounded-full text-slate-400"><X size={20}/></button></div><div className="p-6 overflow-y-auto flex-1"><div className="space-y-4"><div className="bg-amber-50 border border-amber-200 p-3 rounded-lg flex gap-3 text-xs text-amber-800"><AlertTriangle size={16} className="shrink-0 mt-0.5"/><p>Sistem tidak dapat mengembalikan nama variabel secara otomatis. Mohon ketik nama yang sesuai agar data tersaji dengan benar.</p></div><table className="w-full text-left text-sm"><thead className="bg-slate-100 border-b border-slate-200 text-xs font-bold text-slate-500 uppercase"><tr><th className="px-3 py-2 w-16 text-center">Posisi</th><th className="px-3 py-2">ID Data</th><th className="px-3 py-2 w-32">Tipe</th><th className="px-3 py-2">Nama Asli Variabel (Wajib Diisi)</th><th className="px-3 py-2 w-10"></th></tr></thead><tbody className="divide-y divide-slate-100">{restoreConfigs.map((cfg, idx) => (<tr key={cfg.id} className="hover:bg-slate-50"><td className="px-3 py-3"><div className="flex items-center justify-center gap-1"><button onClick={() => handleMoveUp(idx)} disabled={idx === 0} className="p-1 rounded hover:bg-slate-200 text-slate-500 disabled:opacity-30 disabled:hover:bg-transparent"><ArrowUp size={14} /></button><button onClick={() => handleMoveDown(idx)} disabled={idx === restoreConfigs.length - 1} className="p-1 rounded hover:bg-slate-200 text-slate-500 disabled:opacity-30 disabled:hover:bg-transparent"><ArrowDown size={14} /></button></div></td><td className="px-3 py-3 font-mono text-[10px] text-slate-400 select-all" title={cfg.id}>{cfg.id.substring(0,8)}...</td><td className="px-3 py-3"><select value={cfg.type} onChange={(e) => handleUpdateRestoreConfig(idx, 'type', e.target.value)} className="w-full border border-slate-300 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-indigo-500"><option value="star">★ Bintang</option><option value="slider">⸺ Skala</option><option value="text">¶ Teks</option></select>{cfg.type !== cfg.originalInferredType && (<div className="text-[10px] text-amber-600 mt-1">Terdeteksi: {cfg.originalInferredType}</div>)}</td><td className="px-3 py-3"><input type="text" value={cfg.label} onChange={(e) => handleUpdateRestoreConfig(idx, 'label', e.target.value)} className={`w-full border rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-2 ${!cfg.label ? 'border-red-300 ring-red-100 focus:ring-red-200' : 'border-slate-300 focus:ring-indigo-200'}`} placeholder="Ketik Pertanyaan/Variabel..." autoFocus={idx === 0} /></td><td className="px-3 py-3"><button onClick={() => handleRemoveRestoreConfig(idx)} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors" title="Hapus dari daftar pemulihan (Data tidak akan ditampilkan)"><Trash2 size={16} /></button></td></tr>))}</tbody></table></div></div><div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-end gap-3"><button onClick={() => setIsRestoreModalOpen(false)} className="px-4 py-2 text-slate-600 hover:bg-slate-200 rounded-lg font-bold text-sm">Batal</button><button onClick={handleExecuteRestore} disabled={isRestoring} className="px-6 py-2 bg-emerald-600 text-white rounded-lg font-bold text-sm hover:bg-emerald-700 flex items-center gap-2 disabled:opacity-50">{isRestoring ? <RefreshCw size={16} className="animate-spin"/> : <Save size={16}/>} Pulihkan & Simpan Permanen</button></div></div></div>)}
+        {isDeleteModalOpen && (<div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm"><div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in-95"><div className="p-6"><div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center mx-auto mb-4"><Trash2 className="text-red-600" size={24}/></div><h3 className="text-center font-bold text-slate-800 text-lg mb-2">Hapus Hasil Penilaian?</h3><p className="text-center text-slate-500 text-sm mb-6">Anda akan menghapus seluruh data penilaian untuk fasilitator <strong>{targetToDelete}</strong> dalam pelatihan ini. Tindakan ini tidak dapat dibatalkan.</p><div className="space-y-3"><div><label className="block text-xs font-bold text-slate-700 uppercase mb-1">Kode Otorisasi (Sandi)</label><div className="relative"><Lock size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/><input type="password" value={deletePassword} onChange={(e) => setDeletePassword(e.target.value)} className="w-full pl-9 pr-4 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-red-500 focus:outline-none" placeholder="Masukkan sandi..." autoFocus /></div></div><div className="flex gap-2 pt-2"><button onClick={() => { setIsDeleteModalOpen(false); setTargetToDelete(null); }} className="flex-1 py-2.5 bg-slate-100 text-slate-600 font-bold rounded-lg hover:bg-slate-200 transition">Batal</button><button onClick={handleDeleteConfirm} disabled={isDeleting || !deletePassword} className="flex-1 py-2.5 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700 transition disabled:opacity-50 flex items-center justify-center gap-2">{isDeleting ? 'Menghapus...' : 'Hapus Data'}</button></div></div></div></div></div>)}
+        {isReorderModalOpen && (<div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in zoom-in-95"><div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[80vh]"><div className="px-6 py-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center"><div className="flex items-center gap-3"><div className="bg-indigo-100 p-2 rounded-full text-indigo-600"><ListOrdered size={20}/></div><div><h3 className="font-bold text-slate-800">Atur Posisi Fasilitator</h3><p className="text-xs text-slate-500">Urutkan tampilan daftar pada laporan.</p></div></div><button onClick={() => setIsReorderModalOpen(false)} className="p-1 hover:bg-slate-200 rounded-full text-slate-400"><X size={20}/></button></div><div className="p-6 overflow-y-auto flex-1 bg-slate-50/50"><div className="space-y-2">{reorderList.length === 0 ? (<p className="text-center text-slate-400 text-sm italic py-4">Tidak ada data fasilitator.</p>) : (reorderList.map((item, idx) => (<div key={idx} className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between group hover:border-indigo-300 transition-colors"><div className="flex items-center gap-3 overflow-hidden"><div className="w-6 h-6 rounded bg-slate-100 flex items-center justify-center text-xs font-bold text-slate-500 shrink-0">{idx + 1}</div><div className="min-w-0"><div className="font-bold text-sm text-slate-800 truncate">{item.name}</div><div className="text-xs text-slate-500 truncate">{item.subject}</div></div></div><div className="flex items-center gap-1 shrink-0"><button onClick={() => handleMoveFacilitator(idx, -1)} disabled={idx === 0} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-indigo-600 disabled:opacity-30 disabled:hover:bg-transparent"><ArrowUp size={18}/></button><button onClick={() => handleMoveFacilitator(idx, 1)} disabled={idx === reorderList.length - 1} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-indigo-600 disabled:opacity-30 disabled:hover:bg-transparent"><ArrowDown size={18}/></button></div></div>)))}</div></div><div className="p-4 border-t border-slate-100 bg-white flex justify-end gap-3"><button onClick={() => setIsReorderModalOpen(false)} className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg font-bold text-sm">Batal</button><button onClick={saveFacilitatorOrder} disabled={isSavingOrder} className="px-6 py-2 bg-indigo-600 text-white rounded-lg font-bold text-sm hover:bg-indigo-700 flex items-center gap-2 disabled:opacity-70">{isSavingOrder ? <RefreshCw size={16} className="animate-spin"/> : <Save size={16}/>} Simpan Urutan</button></div></div></div>)}
 
       </div>
     </div>

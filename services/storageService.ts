@@ -1,3 +1,4 @@
+
 import { Training, Response, GlobalQuestion, Contact, AppSettings, TrainingTheme, GuestEntry, Facilitator } from '../types';
 import { db } from './firebaseConfig';
 import { 
@@ -306,6 +307,40 @@ export const toggleFacilitatorVisibility = async (trainingId: string, facilitato
         await setDoc(trainingRef, { ...trainingData, facilitators: updatedFacilitators });
     } catch (error) {
         console.error("Error toggling visibility:", error);
+        throw error;
+    }
+};
+
+// --- NEW FEATURE: HIDE SPECIFIC QUESTIONS FOR A FACILITATOR ---
+export const hideFacilitatorQuestions = async (
+    trainingId: string, 
+    facilitatorName: string, 
+    subject: string, 
+    questionIdsToHide: string[]
+): Promise<void> => {
+    try {
+        const trainingRef = doc(db, 'trainings', trainingId);
+        const trainingSnap = await getDoc(trainingRef);
+        if (!trainingSnap.exists()) throw new Error("Pelatihan tidak ditemukan");
+        
+        const trainingData = trainingSnap.data() as Training;
+        const nameLower = facilitatorName.trim().toLowerCase();
+        const subjectLower = subject.trim().toLowerCase();
+
+        // Update specific facilitator entry
+        const updatedFacilitators = trainingData.facilitators.map(f => {
+            if (f.name.trim().toLowerCase() === nameLower && f.subject.trim().toLowerCase() === subjectLower) {
+                // Merge existing hidden IDs with new ones
+                const currentHidden = f.hiddenQuestionIds || [];
+                const newHidden = Array.from(new Set([...currentHidden, ...questionIdsToHide]));
+                return { ...f, hiddenQuestionIds: newHidden };
+            }
+            return f;
+        });
+        
+        await setDoc(trainingRef, { ...trainingData, facilitators: updatedFacilitators });
+    } catch (error) {
+        console.error("Error hiding specific questions:", error);
         throw error;
     }
 };
