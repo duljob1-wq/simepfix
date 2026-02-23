@@ -90,6 +90,64 @@ const getTextAnswers = (responses: Response[], qId: string) => {
     .filter(a => typeof a === 'string' && a.trim() !== '') as string[];
 };
 
+const getCombinedAverage = (responses: Response[], qIds: string[]) => {
+    const validValues: number[] = [];
+    responses.forEach(r => {
+        qIds.forEach(qId => {
+            const val = r.answers[qId];
+            if (typeof val === 'number') validValues.push(val);
+        });
+    });
+    
+    if (validValues.length === 0) return 0;
+    const sum = validValues.reduce((a, b) => a + b, 0);
+    return Number((sum / validValues.length).toFixed(2));
+};
+
+const getCombinedTextAnswers = (responses: Response[], qIds: string[]) => {
+    const texts: string[] = [];
+    responses.forEach(r => {
+        qIds.forEach(qId => {
+            const val = r.answers[qId];
+            if (typeof val === 'string' && val.trim() !== '') texts.push(val);
+        });
+    });
+    return texts;
+};
+
+const calculateCombinedDistribution = (responses: Response[], qIds: string[], type: QuestionType) => {
+    const counts = { k: 0, s: 0, b: 0, sb: 0, total: 0 };
+    responses.forEach(r => {
+        qIds.forEach(qId => {
+            const val = r.answers[qId];
+            if (typeof val === 'number') {
+                counts.total++;
+                if (type === 'star') {
+                    if (val <= 1) counts.k++;
+                    else if (val <= 3) counts.s++;
+                    else if (val === 4) counts.b++;
+                    else if (val === 5) counts.sb++;
+                } else {
+                    if (val <= 55) counts.k++;
+                    else if (val <= 75) counts.s++;
+                    else if (val <= 85) counts.b++;
+                    else counts.sb++;
+                }
+            }
+        });
+    });
+
+    if (counts.total === 0) return { k: '0.0', s: '0.0', b: '0.0', sb: '0.0', total: 0 };
+    
+    return {
+        k: ((counts.k / counts.total) * 100).toFixed(1),
+        s: ((counts.s / counts.total) * 100).toFixed(1),
+        b: ((counts.b / counts.total) * 100).toFixed(1),
+        sb: ((counts.sb / counts.total) * 100).toFixed(1),
+        total: counts.total
+    };
+};
+
 function calculateOverall(items: Response[], qs: Question[]) {
     const starQs = qs.filter(q => q.type === 'star');
     let starAvg = 0;
@@ -241,6 +299,18 @@ export const ResultsView: React.FC = () => {
       return [...activeQuestions, ...restoredQuestions];
   }, [activeQuestions, orphanedQuestionIds, showRestoredData, filteredResponses]);
 
+  const groupedQuestions = useMemo(() => {
+      const groups: Record<string, { ids: string[], type: QuestionType, label: string }> = {};
+      effectiveQuestions.forEach(q => {
+          const key = q.label.trim();
+          if (!groups[key]) {
+              groups[key] = { ids: [], type: q.type, label: q.label };
+          }
+          groups[key].ids.push(q.id);
+      });
+      return Object.values(groups);
+  }, [effectiveQuestions]);
+
   const flatSessions = useMemo<SessionData[]>(() => {
       if (!training) return [];
       const groupedSessions: Record<string, Response[]> = {};
@@ -374,31 +444,37 @@ export const ResultsView: React.FC = () => {
   };
 
   // --- VARIABLE SELECTION LOGIC ---
-  const handleToggleSelectVariable = (qId: string, sessionKey: string) => { 
+  const handleToggleSelectVariable = (qIds: string[], sessionKey: string) => { 
       const newSet = new Set(selectedVarIds); 
-      let key = '';
       
-      if (scopeMode === 'global') {
-          key = `GLOBAL:${qId}`;
-          // If in global mode, ensure specific session keys are removed or handled? 
-          // Simpler: Just track question ID logic visually.
-          // Correct implementation: Global uses just ID concept, but we store it uniquely
-      } else {
-          key = `SESSION:${sessionKey}:${qId}`;
-      }
+      const isGroupSelected = qIds.every(qId => {
+          const key = scopeMode === 'global' ? `GLOBAL:${qId}` : `SESSION:${sessionKey}:${qId}`;
+          return newSet.has(key);
+      });
 
-      if (newSet.has(key)) newSet.delete(key); 
-      else newSet.add(key); 
+      qIds.forEach(qId => {
+          let key = '';
+          if (scopeMode === 'global') {
+              key = `GLOBAL:${qId}`;
+          } else {
+              key = `SESSION:${sessionKey}:${qId}`;
+          }
+
+          if (isGroupSelected) newSet.delete(key); 
+          else newSet.add(key); 
+      });
       
       setSelectedVarIds(newSet); 
   };
 
-  const isVariableSelected = (qId: string, sessionKey: string) => {
-      if (scopeMode === 'global') {
-          return selectedVarIds.has(`GLOBAL:${qId}`);
-      } else {
-          return selectedVarIds.has(`SESSION:${sessionKey}:${qId}`);
-      }
+  const isVariableSelected = (qIds: string[], sessionKey: string) => {
+      return qIds.every(qId => {
+          if (scopeMode === 'global') {
+              return selectedVarIds.has(`GLOBAL:${qId}`);
+          } else {
+              return selectedVarIds.has(`SESSION:${sessionKey}:${qId}`);
+          }
+      });
   };
 
   // --- DELETE VARIABLES LOGIC ---
@@ -688,16 +764,16 @@ export const ResultsView: React.FC = () => {
                                                 </tr>
                                             </thead>
                                             <tbody className="divide-y divide-slate-100">
-                                                {effectiveQuestions.filter(q => q.type !== 'text').map((q, qIdx) => {
-                                                    const dist = calculateDistribution(session.items, q.id, q.type);
+                                                {groupedQuestions.filter(q => q.type !== 'text').map((q, qIdx) => {
+                                                    const dist = calculateCombinedDistribution(session.items, q.ids, q.type);
                                                     const isRestored = q.label.includes('(Data Lama)');
-                                                    const isSelected = isVariableSelected(q.id, sessionKey);
+                                                    const isSelected = isVariableSelected(q.ids, sessionKey);
                                                     const valK = parseFloat(dist.k); const valS = parseFloat(dist.s); const valB = parseFloat(dist.b); const valSb = parseFloat(dist.sb);
                                                     const maxVal = Math.max(valK, valS, valB, valSb);
                                                     const getStyle = (val: number) => val === maxVal && maxVal > 0 ? 'font-extrabold text-slate-900' : 'text-slate-500';
 
                                                     return (
-                                                        <tr key={q.id} className={`hover:bg-slate-50 transition ${isRestored ? 'bg-amber-50/50' : ''} ${isSelected ? 'bg-red-50' : ''}`} onClick={() => { if(isManageMode && !isRestored) handleToggleSelectVariable(q.id, sessionKey); }}>
+                                                        <tr key={q.label} className={`hover:bg-slate-50 transition ${isRestored ? 'bg-amber-50/50' : ''} ${isSelected ? 'bg-red-50' : ''}`} onClick={() => { if(isManageMode && !isRestored) handleToggleSelectVariable(q.ids, sessionKey); }}>
                                                             <td className="px-4 py-3 text-center text-slate-500 font-mono text-xs">
                                                                 {isManageMode && !isRestored ? (isSelected ? <CheckSquare className="mx-auto text-red-500" size={16}/> : <Square className="mx-auto text-slate-300" size={16}/>) : (qIdx + 1)}
                                                             </td>
@@ -712,11 +788,11 @@ export const ResultsView: React.FC = () => {
                                             </tbody>
                                         </table>
                                         <div className="mt-6 px-4 pb-4">
-                                            {effectiveQuestions.filter(q => q.type === 'text').map(q => (
-                                                <div key={q.id} className="mb-4">
+                                            {groupedQuestions.filter(q => q.type === 'text').map(q => (
+                                                <div key={q.label} className="mb-4">
                                                     <h4 className="font-bold text-sm text-slate-700 mb-2 flex items-center gap-2"><Quote size={14} className="text-indigo-500"/> {q.label}</h4>
                                                     <div className="bg-slate-50 rounded-lg p-3 border border-slate-100 space-y-2 max-h-40 overflow-y-auto custom-scrollbar">
-                                                        {getTextAnswers(session.items, q.id).length > 0 ? (getTextAnswers(session.items, q.id).map((ans, aIdx) => (<p key={aIdx} className="text-xs text-slate-600 italic border-b border-slate-200 last:border-0 pb-1 last:pb-0">"{ans}"</p>))) : <span className="text-xs text-slate-400 italic">Tidak ada jawaban.</span>}
+                                                        {getCombinedTextAnswers(session.items, q.ids).length > 0 ? (getCombinedTextAnswers(session.items, q.ids).map((ans, aIdx) => (<p key={aIdx} className="text-xs text-slate-600 italic border-b border-slate-200 last:border-0 pb-1 last:pb-0">"{ans}"</p>))) : <span className="text-xs text-slate-400 italic">Tidak ada jawaban.</span>}
                                                     </div>
                                                 </div>
                                             ))}
@@ -725,23 +801,24 @@ export const ResultsView: React.FC = () => {
                                 ) : (
                                     /* GRID VIEW (FACILITATOR) */
                                     <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                                        {effectiveQuestions.map(q => {
+                                        {groupedQuestions.map(q => {
                                             // HIDE IF EXCLUDED (Unless it's restored data or we are in manage mode)
-                                            if (!isManageMode && session.hiddenQuestionIds?.includes(q.id)) return null;
+                                            // If grouped, we check if ALL are hidden
+                                            const isHidden = q.ids.every(id => session.hiddenQuestionIds?.includes(id));
+                                            if (!isManageMode && isHidden) return null;
 
-                                            const avg = getAverage(session.items, q.id);
+                                            const avg = getCombinedAverage(session.items, q.ids);
                                             const label = getLabel(avg, q.type);
                                             const labelColor = getLabelColor(avg, q.type);
                                             const isRestored = q.label.includes('(Data Lama)');
-                                            const isSelected = isVariableSelected(q.id, sessionKey);
-                                            const isHidden = session.hiddenQuestionIds?.includes(q.id);
+                                            const isSelected = isVariableSelected(q.ids, sessionKey);
 
                                             return (
-                                            <div key={q.id} className={`bg-white border rounded-lg p-2.5 shadow-sm flex flex-col h-full relative transition-all ${isRestored ? 'border-amber-300 bg-amber-50 ring-1 ring-amber-100' : 'border-slate-100'} ${isManageMode && !isRestored ? 'cursor-pointer hover:border-indigo-300 hover:shadow-md' : ''} ${isSelected ? 'ring-2 ring-red-500 border-red-500 bg-red-50' : ''} ${isHidden && isManageMode ? 'opacity-50 grayscale' : ''}`} onClick={() => { if(isManageMode && !isRestored) handleToggleSelectVariable(q.id, sessionKey); }}>
+                                            <div key={q.label} className={`bg-white border rounded-lg p-2.5 shadow-sm flex flex-col h-full relative transition-all ${isRestored ? 'border-amber-300 bg-amber-50 ring-1 ring-amber-100' : 'border-slate-100'} ${isManageMode && !isRestored ? 'cursor-pointer hover:border-indigo-300 hover:shadow-md' : ''} ${isSelected ? 'ring-2 ring-red-500 border-red-500 bg-red-50' : ''} ${isHidden && isManageMode ? 'opacity-50 grayscale' : ''}`} onClick={() => { if(isManageMode && !isRestored) handleToggleSelectVariable(q.ids, sessionKey); }}>
                                                 {isManageMode && !isRestored && (<div className="absolute top-2 right-2 z-10">{isSelected ? <CheckSquare className="text-red-500 fill-white" size={20}/> : <Square className="text-slate-300" size={20}/>}</div>)}
                                                 {isHidden && isManageMode && <div className="absolute top-2 left-2 z-10 bg-slate-800 text-white text-[9px] px-1.5 py-0.5 rounded">Disembunyikan</div>}
                                                 <div className="flex items-start justify-between mb-1.5 pr-6"><p className={`text-[11px] font-bold line-clamp-2 h-[28px] leading-snug flex-1 ${isRestored ? 'text-amber-800 italic' : 'text-slate-700'}`} title={q.label}>{q.label}</p>{isRestored && <AlertTriangle size={12} className="text-amber-500 shrink-0 ml-1"/>}</div>
-                                                <div className="mt-auto">{q.type === 'text' ? (<div className="bg-white/50 rounded-lg p-2 max-h-32 overflow-y-auto space-y-2 custom-scrollbar border border-slate-200/50">{getTextAnswers(session.items, q.id).length > 0 ? (getTextAnswers(session.items, q.id).map((ans, idx) => (<div key={idx} className="flex gap-1.5 text-[10px] text-slate-600 leading-relaxed border-b border-slate-100 last:border-0 pb-1 last:pb-0"><Quote size={10} className="text-slate-400 min-w-[10px] mt-0.5" /><p className="italic">{ans}</p></div>))) : ( <span className="text-[10px] text-slate-400">Tidak ada jawaban</span> )}</div>) : (<div className="flex flex-col gap-2"><div className="flex items-center justify-between pt-1"><span className="text-lg font-bold text-slate-800 tracking-tight">{avg}</span><span className={`text-[9px] px-1.5 py-0.5 rounded border font-bold uppercase tracking-wide ${labelColor}`}>{label}</span></div></div>)}</div>
+                                                <div className="mt-auto">{q.type === 'text' ? (<div className="bg-white/50 rounded-lg p-2 max-h-32 overflow-y-auto space-y-2 custom-scrollbar border border-slate-200/50">{getCombinedTextAnswers(session.items, q.ids).length > 0 ? (getCombinedTextAnswers(session.items, q.ids).map((ans, idx) => (<div key={idx} className="flex gap-1.5 text-[10px] text-slate-600 leading-relaxed border-b border-slate-100 last:border-0 pb-1 last:pb-0"><Quote size={10} className="text-slate-400 min-w-[10px] mt-0.5" /><p className="italic">{ans}</p></div>))) : ( <span className="text-[10px] text-slate-400">Tidak ada jawaban</span> )}</div>) : (<div className="flex flex-col gap-2"><div className="flex items-center justify-between pt-1"><span className="text-lg font-bold text-slate-800 tracking-tight">{avg}</span><span className={`text-[9px] px-1.5 py-0.5 rounded border font-bold uppercase tracking-wide ${labelColor}`}>{label}</span></div></div>)}</div>
                                             </div>
                                         )})}
                                     </div>
