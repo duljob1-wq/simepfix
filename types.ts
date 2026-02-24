@@ -39,6 +39,7 @@ export interface Facilitator {
   order?: number; 
   isHidden?: boolean; // Hide entire session
   hiddenQuestionIds?: string[]; // Hide specific questions for this session
+  customLabels?: Record<string, string>; // Override question labels for this session { qId: "New Label" }
 }
 
 export interface Training {

@@ -1,7 +1,7 @@
 
 import React, { useEffect, useState, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { getTrainingById, getResponses, deleteFacilitatorResponses, getSettings, saveTraining, renameFacilitator, toggleFacilitatorVisibility, updateFacilitatorSubject, updateFacilitatorsOrder, hideFacilitatorQuestions } from '../services/storageService';
+import { getTrainingById, getResponses, deleteFacilitatorResponses, getSettings, saveTraining, renameFacilitator, toggleFacilitatorVisibility, updateFacilitatorSubject, updateFacilitatorsOrder, hideFacilitatorQuestions, updateFacilitatorQuestionLabel } from '../services/storageService';
 import { Training, Response, QuestionType, Question } from '../types';
 import { ArrowLeft, User, Layout, Quote, Calendar, Award, Trash2, Lock, UserCheck, AlertTriangle, RefreshCw, Eye, EyeOff, Save, CheckCircle, Pencil, X, ArrowUp, ArrowDown, Settings2, CheckSquare, Square, BarChart2, Edit2, Check, ListOrdered, Globe, Filter } from 'lucide-react';
 
@@ -189,6 +189,7 @@ interface SessionData {
     items: Response[];
     isHidden?: boolean; 
     hiddenQuestionIds?: string[]; // Specific hidden questions for this session
+    customLabels?: Record<string, string>; // Override labels
     overall: {
         starAvg: number;
         sliderAvg: number;
@@ -249,6 +250,11 @@ export const ResultsView: React.FC = () => {
   const [isReorderModalOpen, setIsReorderModalOpen] = useState(false);
   const [reorderList, setReorderList] = useState<{key: string, name: string, subject: string}[]>([]);
   const [isSavingOrder, setIsSavingOrder] = useState(false);
+
+  // Edit Question Label State (Superadmin)
+  const [editingQuestionKey, setEditingQuestionKey] = useState<string | null>(null); // "sessionKey|questionId"
+  const [questionLabelInput, setQuestionLabelInput] = useState('');
+  const [isSavingLabel, setIsSavingLabel] = useState(false);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -341,6 +347,7 @@ export const ResultsView: React.FC = () => {
           let date = '';
           let isHidden = false;
           let hiddenQuestionIds: string[] = [];
+          let customLabels: Record<string, string> = {};
 
           if (activeTab === 'facilitator') {
               const matchingFacs = training.facilitators.filter(f => 
@@ -356,10 +363,11 @@ export const ResultsView: React.FC = () => {
                   date = bestMatch.sessionDate;
                   isHidden = !!bestMatch.isHidden;
                   hiddenQuestionIds = bestMatch.hiddenQuestionIds || [];
+                  customLabels = bestMatch.customLabels || {};
               }
           }
           const overall = calculateOverall(items, effectiveQuestions);
-          return { name, subject, date, items, overall, isHidden, hiddenQuestionIds };
+          return { name, subject, date, items, overall, isHidden, hiddenQuestionIds, customLabels };
       });
 
       if (isGuest) {
@@ -566,6 +574,46 @@ export const ResultsView: React.FC = () => {
   const handleMoveFacilitator = (index: number, direction: -1 | 1) => { const newList = [...reorderList]; if (direction === -1 && index === 0) return; if (direction === 1 && index === newList.length - 1) return; const targetIndex = index + direction; [newList[index], newList[targetIndex]] = [newList[targetIndex], newList[index]]; setReorderList(newList); };
   const saveFacilitatorOrder = async () => { if (!training) return; setIsSavingOrder(true); try { const updatedFacilitators = [...training.facilitators]; reorderList.forEach((item, index) => { const newOrder = index + 1; updatedFacilitators.forEach(f => { if (f.name.trim().toLowerCase() === item.name.trim().toLowerCase() && f.subject.trim().toLowerCase() === item.subject.trim().toLowerCase()) { f.order = newOrder; } }); }); await updateFacilitatorsOrder(training.id, updatedFacilitators); setTraining({...training, facilitators: updatedFacilitators}); setIsReorderModalOpen(false); } catch (error) { alert("Gagal menyimpan urutan."); console.error(error); } finally { setIsSavingOrder(false); } };
 
+  const handleStartLabelEdit = (sessionKey: string, qId: string, currentLabel: string) => {
+      setEditingQuestionKey(`${sessionKey}|${qId}`);
+      setQuestionLabelInput(currentLabel);
+  };
+
+  const handleCancelLabelEdit = () => {
+      setEditingQuestionKey(null);
+      setQuestionLabelInput('');
+  };
+
+  const handleSaveLabelEdit = async (sessionName: string, sessionSubject: string, qIds: string[]) => {
+      if (!training || !questionLabelInput.trim()) return;
+      setIsSavingLabel(true);
+      try {
+          await Promise.all(qIds.map(id => 
+              updateFacilitatorQuestionLabel(training.id, sessionName, sessionSubject, id, questionLabelInput.trim())
+          ));
+          
+          const updatedTraining = { ...training };
+          updatedTraining.facilitators = updatedTraining.facilitators.map(f => {
+              if (f.name === sessionName && f.subject === sessionSubject) {
+                  const currentLabels = f.customLabels || {};
+                  const newLabels = { ...currentLabels };
+                  qIds.forEach(id => {
+                      newLabels[id] = questionLabelInput.trim();
+                  });
+                  return { ...f, customLabels: newLabels };
+              }
+              return f;
+          });
+          setTraining(updatedTraining);
+          handleCancelLabelEdit();
+      } catch (error) {
+          alert('Gagal mengubah label.');
+          console.error(error);
+      } finally {
+          setIsSavingLabel(false);
+      }
+  };
+
   if (!training) return <div className="p-8 text-center text-slate-500">Memuat Laporan...</div>;
 
   return (
@@ -681,6 +729,27 @@ export const ResultsView: React.FC = () => {
                     const isHidden = session.isHidden;
                     const sessionKey = `${session.name}|${session.subject}`;
                     const isEditingSubject = editingSubjectKey === sessionKey;
+
+                    // Calculate session-specific questions
+                    const sessionQuestions = effectiveQuestions.map(q => {
+                        if (session.customLabels && session.customLabels[q.id]) {
+                            return { ...q, label: session.customLabels[q.id] };
+                        }
+                        return q;
+                    });
+
+                    // Group them
+                    const localGroupedQuestions = (() => {
+                        const groups: Record<string, { ids: string[], type: QuestionType, label: string }> = {};
+                        sessionQuestions.forEach(q => {
+                            const key = q.label.trim();
+                            if (!groups[key]) {
+                                groups[key] = { ids: [], type: q.type, label: q.label };
+                            }
+                            groups[key].ids.push(q.id);
+                        });
+                        return Object.values(groups);
+                    })();
                     
                     return (
                         <div key={`${session.name}-${session.subject}-${idx}`} className={`bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden transition-opacity ${isHidden ? 'opacity-70 grayscale-[0.5]' : 'opacity-100'}`}>
@@ -764,7 +833,7 @@ export const ResultsView: React.FC = () => {
                                                 </tr>
                                             </thead>
                                             <tbody className="divide-y divide-slate-100">
-                                                {groupedQuestions.filter(q => q.type !== 'text').map((q, qIdx) => {
+                                                {localGroupedQuestions.filter(q => q.type !== 'text').map((q, qIdx) => {
                                                     const dist = calculateCombinedDistribution(session.items, q.ids, q.type);
                                                     const isRestored = q.label.includes('(Data Lama)');
                                                     const isSelected = isVariableSelected(q.ids, sessionKey);
@@ -788,7 +857,7 @@ export const ResultsView: React.FC = () => {
                                             </tbody>
                                         </table>
                                         <div className="mt-6 px-4 pb-4">
-                                            {groupedQuestions.filter(q => q.type === 'text').map(q => (
+                                            {localGroupedQuestions.filter(q => q.type === 'text').map(q => (
                                                 <div key={q.label} className="mb-4">
                                                     <h4 className="font-bold text-sm text-slate-700 mb-2 flex items-center gap-2"><Quote size={14} className="text-indigo-500"/> {q.label}</h4>
                                                     <div className="bg-slate-50 rounded-lg p-3 border border-slate-100 space-y-2 max-h-40 overflow-y-auto custom-scrollbar">
@@ -801,7 +870,7 @@ export const ResultsView: React.FC = () => {
                                 ) : (
                                     /* GRID VIEW (FACILITATOR) */
                                     <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                                        {groupedQuestions.map(q => {
+                                        {localGroupedQuestions.map(q => {
                                             // HIDE IF EXCLUDED (Unless it's restored data or we are in manage mode)
                                             // If grouped, we check if ALL are hidden
                                             const isHidden = q.ids.every(id => session.hiddenQuestionIds?.includes(id));
@@ -812,12 +881,44 @@ export const ResultsView: React.FC = () => {
                                             const labelColor = getLabelColor(avg, q.type);
                                             const isRestored = q.label.includes('(Data Lama)');
                                             const isSelected = isVariableSelected(q.ids, sessionKey);
+                                            const isEditingLabel = editingQuestionKey === `${sessionKey}|${q.ids[0]}`;
 
                                             return (
                                             <div key={q.label} className={`bg-white border rounded-lg p-2.5 shadow-sm flex flex-col h-full relative transition-all ${isRestored ? 'border-amber-300 bg-amber-50 ring-1 ring-amber-100' : 'border-slate-100'} ${isManageMode && !isRestored ? 'cursor-pointer hover:border-indigo-300 hover:shadow-md' : ''} ${isSelected ? 'ring-2 ring-red-500 border-red-500 bg-red-50' : ''} ${isHidden && isManageMode ? 'opacity-50 grayscale' : ''}`} onClick={() => { if(isManageMode && !isRestored) handleToggleSelectVariable(q.ids, sessionKey); }}>
                                                 {isManageMode && !isRestored && (<div className="absolute top-2 right-2 z-10">{isSelected ? <CheckSquare className="text-red-500 fill-white" size={20}/> : <Square className="text-slate-300" size={20}/>}</div>)}
                                                 {isHidden && isManageMode && <div className="absolute top-2 left-2 z-10 bg-slate-800 text-white text-[9px] px-1.5 py-0.5 rounded">Disembunyikan</div>}
-                                                <div className="flex items-start justify-between mb-1.5 pr-6"><p className={`text-[11px] font-bold line-clamp-2 h-[28px] leading-snug flex-1 ${isRestored ? 'text-amber-800 italic' : 'text-slate-700'}`} title={q.label}>{q.label}</p>{isRestored && <AlertTriangle size={12} className="text-amber-500 shrink-0 ml-1"/>}</div>
+                                                
+                                                <div className="flex items-start justify-between mb-1.5 pr-6">
+                                                    {isEditingLabel ? (
+                                                        <div className="flex items-center gap-1 w-full z-20">
+                                                            <input 
+                                                                type="text" 
+                                                                value={questionLabelInput} 
+                                                                onChange={(e) => setQuestionLabelInput(e.target.value)} 
+                                                                className="w-full text-[10px] border border-indigo-300 rounded px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-indigo-500 font-bold text-slate-800"
+                                                                autoFocus
+                                                                onClick={(e) => e.stopPropagation()}
+                                                            />
+                                                            <button onClick={(e) => { e.stopPropagation(); handleSaveLabelEdit(session.name, session.subject, q.ids); }} disabled={isSavingLabel} className="bg-emerald-600 text-white p-0.5 rounded hover:bg-emerald-700 shrink-0"><Check size={12}/></button>
+                                                            <button onClick={(e) => { e.stopPropagation(); handleCancelLabelEdit(); }} className="bg-slate-300 text-slate-700 p-0.5 rounded hover:bg-slate-400 shrink-0"><X size={12}/></button>
+                                                        </div>
+                                                    ) : (
+                                                        <p className={`text-[11px] font-bold line-clamp-2 h-[28px] leading-snug flex-1 ${isRestored ? 'text-amber-800 italic' : 'text-slate-700'} group/label`} title={q.label}>
+                                                            {q.label}
+                                                            {isSuperAdmin && activeTab === 'facilitator' && !isRestored && !isManageMode && (
+                                                                <button 
+                                                                    onClick={(e) => { e.stopPropagation(); handleStartLabelEdit(sessionKey, q.ids[0], q.label); }} 
+                                                                    className="ml-1 opacity-0 group-hover/label:opacity-100 transition-opacity text-slate-300 hover:text-indigo-500 inline-block align-middle"
+                                                                    title="Edit Nama Variabel (Hanya sesi ini)"
+                                                                >
+                                                                    <Pencil size={10} />
+                                                                </button>
+                                                            )}
+                                                        </p>
+                                                    )}
+                                                    {isRestored && <AlertTriangle size={12} className="text-amber-500 shrink-0 ml-1"/>}
+                                                </div>
+
                                                 <div className="mt-auto">{q.type === 'text' ? (<div className="bg-white/50 rounded-lg p-2 max-h-32 overflow-y-auto space-y-2 custom-scrollbar border border-slate-200/50">{getCombinedTextAnswers(session.items, q.ids).length > 0 ? (getCombinedTextAnswers(session.items, q.ids).map((ans, idx) => (<div key={idx} className="flex gap-1.5 text-[10px] text-slate-600 leading-relaxed border-b border-slate-100 last:border-0 pb-1 last:pb-0"><Quote size={10} className="text-slate-400 min-w-[10px] mt-0.5" /><p className="italic">{ans}</p></div>))) : ( <span className="text-[10px] text-slate-400">Tidak ada jawaban</span> )}</div>) : (<div className="flex flex-col gap-2"><div className="flex items-center justify-between pt-1"><span className="text-lg font-bold text-slate-800 tracking-tight">{avg}</span><span className={`text-[9px] px-1.5 py-0.5 rounded border font-bold uppercase tracking-wide ${labelColor}`}>{label}</span></div></div>)}</div>
                                             </div>
                                         )})}

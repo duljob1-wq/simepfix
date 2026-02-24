@@ -345,6 +345,40 @@ export const hideFacilitatorQuestions = async (
     }
 };
 
+// --- NEW FEATURE: UPDATE QUESTION LABEL FOR A FACILITATOR ---
+export const updateFacilitatorQuestionLabel = async (
+    trainingId: string, 
+    facilitatorName: string, 
+    subject: string, 
+    questionId: string,
+    newLabel: string
+): Promise<void> => {
+    try {
+        const trainingRef = doc(db, 'trainings', trainingId);
+        const trainingSnap = await getDoc(trainingRef);
+        if (!trainingSnap.exists()) throw new Error("Pelatihan tidak ditemukan");
+        
+        const trainingData = trainingSnap.data() as Training;
+        const nameLower = facilitatorName.trim().toLowerCase();
+        const subjectLower = subject.trim().toLowerCase();
+
+        // Update specific facilitator entry
+        const updatedFacilitators = trainingData.facilitators.map(f => {
+            if (f.name.trim().toLowerCase() === nameLower && f.subject.trim().toLowerCase() === subjectLower) {
+                const currentLabels = f.customLabels || {};
+                const newLabels = { ...currentLabels, [questionId]: newLabel };
+                return { ...f, customLabels: newLabels };
+            }
+            return f;
+        });
+        
+        await setDoc(trainingRef, { ...trainingData, facilitators: updatedFacilitators });
+    } catch (error) {
+        console.error("Error updating question label:", error);
+        throw error;
+    }
+};
+
 // --- NEW FEATURE: UPDATE SUBJECT / MATERI (SUPERADMIN) - Case Insensitive ---
 export const updateFacilitatorSubject = async (
     trainingId: string, 
