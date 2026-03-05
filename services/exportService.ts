@@ -267,6 +267,271 @@ const addPdfSignatureDynamic = (doc: jsPDF, settings: any, startY: number) => {
     return currentY + 35;
 };
 
+
+
+export const exportToExcel = async (training: Training) => {
+  const responses = await getResponses(training.id);
+  const settings = await getSettings(); 
+  const data = processDataForExport(training, responses);
+  const wb = XLSX.utils.book_new();
+
+  // Signature Rows (Reusable)
+  const sigTitle = settings.signatureTitle || 'Kepala Seksi Penyelenggaraan Pelatihan';
+  const sigName = settings.signatureName || 'MUNCUL WIYANA, S.Kep., Ns., M.Kep.';
+  const sigNIP = settings.signatureNIP ? `NIP. ${settings.signatureNIP}` : '';
+  
+  // TTD Dekat (Jarak 1/2 Baris - removed empty row buffer)
+  const getSigRows = () => [
+      ['', '', '', '', sigTitle],
+      ['', '', '', '', ''],
+      ['', '', '', '', ''],
+      ['', '', '', '', sigName],
+      ['', '', '', '', sigNIP]
+  ];
+
+  const infoData = [
+      ['Judul Pelatihan', training.title]
+  ];
+
+  let methodLocStr = '';
+  if (training.learningMethod) methodLocStr += `Metode Pembelajaran ${training.learningMethod} `;
+  if (training.location) methodLocStr += `Di UPT Pelatihan Kesehatan Masyarakat Kampus ${training.location}`;
+
+  if (methodLocStr) {
+      infoData.push(['Metode & Lokasi', methodLocStr.trim()]);
+  }
+
+  infoData.push(
+      ['Periode', `${formatDateID(training.startDate)} s/d ${formatDateID(training.endDate)}`],
+      ['Dicetak', formatDateID(new Date().toISOString())],
+      []
+  );
+
+  const detailRows: any[] = [...infoData, ['A. DETAIL EVALUASI FASILITATOR'], []];
+  
+  const flatSessions = getFlatChronologicalSessions(data.facilitators);
+
+  flatSessions.forEach((session) => {
+      // Find matching facilitator config to get custom labels and hidden IDs
+      const facConfig = training.facilitators.find(f => 
+          f.name.trim().toLowerCase() === session.name.trim().toLowerCase() && 
+          f.subject.trim().toLowerCase() === session.subject.trim().toLowerCase()
+      );
+
+      const hiddenIds = facConfig?.hiddenQuestionIds || [];
+      const customLabels = facConfig?.customLabels || {};
+
+      // 1. Map questions with custom labels
+      const mappedQuestions = training.facilitatorQuestions.map(q => ({
+          ...q,
+          label: customLabels[q.id] || q.label
+      }));
+
+      // 2. Group questions by label
+      const groups: Record<string, { ids: string[], type: QuestionType, label: string }> = {};
+      mappedQuestions.forEach(q => {
+          const key = q.label.trim();
+          if (!groups[key]) {
+              groups[key] = { ids: [], type: q.type, label: q.label };
+          }
+          groups[key].ids.push(q.id);
+      });
+      const groupedQuestions = Object.values(groups);
+
+      detailRows.push([`NAMA FASILITATOR: ${session.name}`]);
+      detailRows.push([`Materi: ${session.subject}`, `Tanggal: ${formatDateID(session.sessionDate)}`]);
+      
+      detailRows.push(['Variabel', 'Nilai']);
+      
+      // Filter and Calculate Scores
+      let totalScore = 0;
+      let totalCount = 0;
+      let dominantType: QuestionType = 'slider';
+
+      groupedQuestions
+          .filter(q => q.type !== 'text')
+          .filter(q => !q.ids.every(id => hiddenIds.includes(id))) // Only show if NOT ALL hidden
+          .forEach(q => {
+              const avg = calculateGroupAverage(session.responses, q.ids);
+              const label = getScoreLabel(avg, q.type);
+              detailRows.push([q.label, `${avg.toFixed(2)} (${label})`]);
+              
+              totalScore += avg;
+              totalCount++;
+              dominantType = q.type;
+          });
+
+      const sessionOverall = totalCount > 0 ? totalScore / totalCount : 0;
+      const sessionOverallStr = `${sessionOverall.toFixed(2)} (${getScoreLabel(sessionOverall, dominantType)})`;
+
+      detailRows.push(['Rata-rata Keseluruhan', sessionOverallStr]);
+
+      const textQs = groupedQuestions.filter(q => q.type === 'text');
+      if (textQs.length > 0) {
+          detailRows.push(['Komentar / Saran Responden (Split):']);
+          textQs.forEach(q => {
+              const cmts = getGroupTextAnswers(session.responses, q.ids);
+              if (cmts.length > 0) {
+                 detailRows.push([`[${q.label}]`]);
+                 // SPLIT COMMENTS 2 COLUMNS IN EXCEL
+                 const split = splitCommentsToPairs(cmts);
+                 split.forEach(row => {
+                     // Row format: ['', left, right] to simulate spacing
+                     detailRows.push(['', row[0], row[1]]);
+                 });
+              }
+          });
+      }
+      detailRows.push(...getSigRows());
+      detailRows.push([]); 
+  });
+
+  const detailWs = XLSX.utils.aoa_to_sheet(detailRows);
+  XLSX.utils.book_append_sheet(wb, detailWs, 'A. Detail Fasilitator');
+
+  const summaryHeader = ['No', 'Nama Fasilitator', 'Materi', 'Tanggal', 'Nilai Akhir'];
+  const summaryRows: any[] = [];
+  let no = 1;
+  let grandTotal = 0;
+  let grandCount = 0;
+
+  const sortedNames = getSortedFacilitatorNamesForRecap(data.facilitators, training);
+
+  sortedNames.forEach((name) => {
+    data.facilitators[name].forEach((session: SessionExportData) => {
+        // Recalculate overall for recap as well to match detailed view
+        const facConfig = training.facilitators.find(f => 
+            f.name.trim().toLowerCase() === session.name.trim().toLowerCase() && 
+            f.subject.trim().toLowerCase() === session.subject.trim().toLowerCase()
+        );
+        const hiddenIds = facConfig?.hiddenQuestionIds || [];
+        const customLabels = facConfig?.customLabels || {};
+
+        const mappedQuestions = training.facilitatorQuestions.map(q => ({
+            ...q,
+            label: customLabels[q.id] || q.label
+        }));
+
+        const groups: Record<string, { ids: string[], type: QuestionType, label: string }> = {};
+        mappedQuestions.forEach(q => {
+            const key = q.label.trim();
+            if (!groups[key]) {
+                groups[key] = { ids: [], type: q.type, label: q.label };
+            }
+            groups[key].ids.push(q.id);
+        });
+        const groupedQuestions = Object.values(groups);
+
+        let totalScore = 0;
+        let totalCount = 0;
+        let dominantType: QuestionType = 'slider';
+
+        groupedQuestions
+            .filter(q => q.type !== 'text')
+            .filter(q => !q.ids.every(id => hiddenIds.includes(id)))
+            .forEach(q => {
+                const avg = calculateGroupAverage(session.responses, q.ids);
+                totalScore += avg;
+                totalCount++;
+                dominantType = q.type;
+            });
+        
+        const sessionOverall = totalCount > 0 ? totalScore / totalCount : 0;
+        const sessionOverallStr = `${sessionOverall.toFixed(2)} (${getScoreLabel(sessionOverall, dominantType)})`;
+
+        summaryRows.push([no++, name, session.subject || '-', formatDateID(session.sessionDate), sessionOverallStr]);
+        grandTotal += sessionOverall;
+        grandCount++;
+    });
+  });
+
+  const grandAvg = grandCount > 0 ? grandTotal / grandCount : 0;
+  const grandLabelType: QuestionType = grandAvg > 5 ? 'slider' : 'star';
+  const grandDisplay = `${grandAvg.toFixed(2)} (${getScoreLabel(grandAvg, grandLabelType)})`;
+
+  summaryRows.push(['', '', '', 'RATA-RATA TOTAL', grandDisplay]);
+
+  // Excel doesn't paginate physically, but we put signature right after
+  const rekapFinalRows = [...infoData, ['B. REKAPITULASI NILAI KESELURUHAN'], [], summaryHeader, ...summaryRows, [], ...getSigRows()];
+
+  const rekapWs = XLSX.utils.aoa_to_sheet(rekapFinalRows);
+  XLSX.utils.book_append_sheet(wb, rekapWs, 'B. Rekapitulasi');
+
+  // --- C. PENYELENGGARAAN ---
+  const procRows: any[] = [...infoData, ['C. EVALUASI PENYELENGGARAAN']];
+  
+  if (training.processOrganizer && training.processOrganizer.name) {
+      procRows.push([`Penanggung Jawab: ${training.processOrganizer.name}`]);
+  }
+  
+  procRows.push([]);
+  procRows.push(['No', 'Hal-hal yang dievaluasi', 'Kurang', 'Sedang', 'Baik', 'Sgt.Baik']);
+  
+  let procNo = 1;
+  training.processQuestions.filter(q => q.type !== 'text').forEach(q => {
+      const dist = data.process.distributions[q.id] || { k:'0.0%', s:'0.0%', b:'0.0%', sb:'0.0%' };
+      procRows.push([
+          procNo++,
+          q.label, 
+          dist.k, dist.s, dist.b, dist.sb
+      ]);
+  });
+  
+  const procTextQs = training.processQuestions.filter(q => q.type === 'text');
+  if (procTextQs.length > 0) {
+      procRows.push([]);
+      procRows.push(['Komentar / Saran Penyelenggaraan (Split):']);
+      procTextQs.forEach(q => {
+          const cmts = data.process.comments[q.id];
+          if (cmts && cmts.length > 0) {
+             procRows.push([`[${q.label}]`]);
+             // SPLIT 2 COLUMNS
+             const split = splitCommentsToPairs(cmts);
+             split.forEach(row => {
+                 procRows.push(['', row[0], row[1]]);
+             });
+          }
+      });
+  }
+
+  procRows.push(...getSigRows());
+
+  const procWs = XLSX.utils.aoa_to_sheet(procRows);
+  XLSX.utils.book_append_sheet(wb, procWs, 'C. Penyelenggaraan');
+
+  XLSX.writeFile(wb, `Laporan_SIMEP_${training.title.replace(/\s+/g, '_')}.xlsx`);
+};
+
+// --- HELPER: Calculate Group Average ---
+const calculateGroupAverage = (responses: Response[], qIds: string[]) => {
+    let total = 0;
+    let count = 0;
+    responses.forEach(r => {
+        qIds.forEach(qId => {
+            const val = r.answers[qId];
+            if (typeof val === 'number') {
+                total += val;
+                count++;
+            }
+        });
+    });
+    return count > 0 ? total / count : 0;
+};
+
+// --- HELPER: Get Group Text Answers ---
+const getGroupTextAnswers = (responses: Response[], qIds: string[]) => {
+    const answers: string[] = [];
+    responses.forEach(r => {
+        qIds.forEach(qId => {
+            const val = r.answers[qId];
+            if (val && typeof val === 'string' && val.trim() !== '') {
+                answers.push(val.trim());
+            }
+        });
+    });
+    return answers;
+};
+
 export const exportToPDF = async (training: Training) => {
   const responses = await getResponses(training.id);
   const settings = await getSettings(); 
@@ -301,7 +566,7 @@ export const exportToPDF = async (training: Training) => {
   doc.text(`Dicetak pada: ${timestamp}`, 14, y);
   y += 10;
 
-  // --- A. DETAIL FASILITATOR ---
+  // --- A. DETAIL FASILITATOR (CUSTOM VIEW) ---
   doc.setFontSize(12);
   doc.setFont("helvetica", "bold");
   doc.text('A. Evaluasi Detail Fasilitator', 14, y);
@@ -317,6 +582,32 @@ export const exportToPDF = async (training: Training) => {
         y += 5;
     }
 
+    // Find matching facilitator config to get custom labels and hidden IDs
+    const facConfig = training.facilitators.find(f => 
+        f.name.trim().toLowerCase() === session.name.trim().toLowerCase() && 
+        f.subject.trim().toLowerCase() === session.subject.trim().toLowerCase()
+    );
+
+    const hiddenIds = facConfig?.hiddenQuestionIds || [];
+    const customLabels = facConfig?.customLabels || {};
+
+    // 1. Map questions with custom labels
+    const mappedQuestions = training.facilitatorQuestions.map(q => ({
+        ...q,
+        label: customLabels[q.id] || q.label
+    }));
+
+    // 2. Group questions by label
+    const groups: Record<string, { ids: string[], type: QuestionType, label: string }> = {};
+    mappedQuestions.forEach(q => {
+        const key = q.label.trim();
+        if (!groups[key]) {
+            groups[key] = { ids: [], type: q.type, label: q.label };
+        }
+        groups[key].ids.push(q.id);
+    });
+    const groupedQuestions = Object.values(groups);
+
     doc.setFontSize(11);
     doc.setFont("helvetica", "bold");
     doc.setFillColor(230, 230, 250); 
@@ -331,11 +622,35 @@ export const exportToPDF = async (training: Training) => {
     doc.text(subjectLines, 14, y);
     y += (subjectLines.length * 4); 
 
-    const scoreRows = training.facilitatorQuestions
-    .filter(q => q.type !== 'text')
-    .map(q => [q.label, session.averages[q.id] || '0.00 (Kurang)']);
+    // Filter and Calculate Scores
+    const scoreRows = groupedQuestions
+        .filter(q => q.type !== 'text')
+        .filter(q => !q.ids.every(id => hiddenIds.includes(id))) // Only show if NOT ALL hidden
+        .map(q => {
+            const avg = calculateGroupAverage(session.responses, q.ids);
+            const label = getScoreLabel(avg, q.type);
+            return [q.label, `${avg.toFixed(2)} (${label})`];
+        });
 
-    scoreRows.push(['Rata-rata Keseluruhan', session.overall]);
+    // Recalculate Overall for this session based on VISIBLE questions
+    let totalScore = 0;
+    let totalCount = 0;
+    let dominantType: QuestionType = 'slider';
+
+    groupedQuestions
+        .filter(q => q.type !== 'text')
+        .filter(q => !q.ids.every(id => hiddenIds.includes(id)))
+        .forEach(q => {
+            const avg = calculateGroupAverage(session.responses, q.ids);
+            totalScore += avg;
+            totalCount++;
+            dominantType = q.type;
+        });
+    
+    const sessionOverall = totalCount > 0 ? totalScore / totalCount : 0;
+    const sessionOverallStr = `${sessionOverall.toFixed(2)} (${getScoreLabel(sessionOverall, dominantType)})`;
+
+    scoreRows.push(['Rata-rata Keseluruhan', sessionOverallStr]);
 
     autoTable(doc, {
         startY: y,
@@ -357,9 +672,9 @@ export const exportToPDF = async (training: Training) => {
     y = (doc as any).lastAutoTable.finalY + 5;
 
     // Comments Section (Split 2 Columns with Divider)
-    const textQs = training.facilitatorQuestions.filter(q => q.type === 'text');
+    const textQs = groupedQuestions.filter(q => q.type === 'text');
     textQs.forEach(q => {
-        const comments = session.comments[q.id];
+        const comments = getGroupTextAnswers(session.responses, q.ids);
         if (comments && comments.length > 0) {
             // Check page break before header
             if (y > 250) { doc.addPage(); y = 20; }
@@ -418,14 +733,54 @@ export const exportToPDF = async (training: Training) => {
   const sortedNames = getSortedFacilitatorNamesForRecap(data.facilitators, training);
   sortedNames.forEach((name) => {
       data.facilitators[name].forEach((session: SessionExportData) => {
+        // Recalculate overall for recap as well to match detailed view
+        const facConfig = training.facilitators.find(f => 
+            f.name.trim().toLowerCase() === session.name.trim().toLowerCase() && 
+            f.subject.trim().toLowerCase() === session.subject.trim().toLowerCase()
+        );
+        const hiddenIds = facConfig?.hiddenQuestionIds || [];
+        const customLabels = facConfig?.customLabels || {};
+
+        const mappedQuestions = training.facilitatorQuestions.map(q => ({
+            ...q,
+            label: customLabels[q.id] || q.label
+        }));
+
+        const groups: Record<string, { ids: string[], type: QuestionType, label: string }> = {};
+        mappedQuestions.forEach(q => {
+            const key = q.label.trim();
+            if (!groups[key]) {
+                groups[key] = { ids: [], type: q.type, label: q.label };
+            }
+            groups[key].ids.push(q.id);
+        });
+        const groupedQuestions = Object.values(groups);
+
+        let totalScore = 0;
+        let totalCount = 0;
+        let dominantType: QuestionType = 'slider';
+
+        groupedQuestions
+            .filter(q => q.type !== 'text')
+            .filter(q => !q.ids.every(id => hiddenIds.includes(id)))
+            .forEach(q => {
+                const avg = calculateGroupAverage(session.responses, q.ids);
+                totalScore += avg;
+                totalCount++;
+                dominantType = q.type;
+            });
+        
+        const sessionOverall = totalCount > 0 ? totalScore / totalCount : 0;
+        const sessionOverallStr = `${sessionOverall.toFixed(2)} (${getScoreLabel(sessionOverall, dominantType)})`;
+
         summaryRows.push([
             no++, 
             name, 
             session.subject || '-', 
             formatDateID(session.sessionDate), 
-            session.overall
+            sessionOverallStr
         ]);
-        grandTotal += session.overallVal;
+        grandTotal += sessionOverall;
         grandCount++;
       });
   });
@@ -575,154 +930,6 @@ export const exportToPDF = async (training: Training) => {
   doc.save(`Laporan_SIMEP_${training.title.replace(/\s+/g, '_')}.pdf`);
 };
 
-export const exportToExcel = async (training: Training) => {
-  const responses = await getResponses(training.id);
-  const settings = await getSettings(); 
-  const data = processDataForExport(training, responses);
-  const wb = XLSX.utils.book_new();
-
-  // Signature Rows (Reusable)
-  const sigTitle = settings.signatureTitle || 'Kepala Seksi Penyelenggaraan Pelatihan';
-  const sigName = settings.signatureName || 'MUNCUL WIYANA, S.Kep., Ns., M.Kep.';
-  const sigNIP = settings.signatureNIP ? `NIP. ${settings.signatureNIP}` : '';
-  
-  // TTD Dekat (Jarak 1/2 Baris - removed empty row buffer)
-  const getSigRows = () => [
-      ['', '', '', '', sigTitle],
-      ['', '', '', '', ''],
-      ['', '', '', '', ''],
-      ['', '', '', '', sigName],
-      ['', '', '', '', sigNIP]
-  ];
-
-  const infoData = [
-      ['Judul Pelatihan', training.title]
-  ];
-
-  let methodLocStr = '';
-  if (training.learningMethod) methodLocStr += `Metode Pembelajaran ${training.learningMethod} `;
-  if (training.location) methodLocStr += `Di UPT Pelatihan Kesehatan Masyarakat Kampus ${training.location}`;
-
-  if (methodLocStr) {
-      infoData.push(['Metode & Lokasi', methodLocStr.trim()]);
-  }
-
-  infoData.push(
-      ['Periode', `${formatDateID(training.startDate)} s/d ${formatDateID(training.endDate)}`],
-      ['Dicetak', formatDateID(new Date().toISOString())],
-      []
-  );
-
-  const detailRows: any[] = [...infoData, ['A. DETAIL EVALUASI FASILITATOR'], []];
-  
-  const flatSessions = getFlatChronologicalSessions(data.facilitators);
-
-  flatSessions.forEach((session) => {
-      detailRows.push([`NAMA FASILITATOR: ${session.name}`]);
-      detailRows.push([`Materi: ${session.subject}`, `Tanggal: ${formatDateID(session.sessionDate)}`]);
-      
-      detailRows.push(['Variabel', 'Nilai']);
-      training.facilitatorQuestions.filter(q => q.type !== 'text').forEach(q => {
-          detailRows.push([q.label, session.averages[q.id]]);
-      });
-      detailRows.push(['Rata-rata Keseluruhan', session.overall]);
-
-      const textQs = training.facilitatorQuestions.filter(q => q.type === 'text');
-      if (textQs.length > 0) {
-          detailRows.push(['Komentar / Saran Responden (Split):']);
-          textQs.forEach(q => {
-              const cmts = session.comments[q.id] || [];
-              if (cmts.length > 0) {
-                 detailRows.push([`[${q.label}]`]);
-                 // SPLIT COMMENTS 2 COLUMNS IN EXCEL
-                 const split = splitCommentsToPairs(cmts);
-                 split.forEach(row => {
-                     // Row format: ['', left, right] to simulate spacing
-                     detailRows.push(['', row[0], row[1]]);
-                 });
-              }
-          });
-      }
-      detailRows.push(...getSigRows());
-      detailRows.push([]); 
-  });
-
-  const detailWs = XLSX.utils.aoa_to_sheet(detailRows);
-  XLSX.utils.book_append_sheet(wb, detailWs, 'A. Detail Fasilitator');
-
-  const summaryHeader = ['No', 'Nama Fasilitator', 'Materi', 'Tanggal', 'Nilai Akhir'];
-  const summaryRows: any[] = [];
-  let no = 1;
-  let grandTotal = 0;
-  let grandCount = 0;
-
-  const sortedNames = getSortedFacilitatorNamesForRecap(data.facilitators, training);
-
-  sortedNames.forEach((name) => {
-    data.facilitators[name].forEach((session: SessionExportData) => {
-        summaryRows.push([no++, name, session.subject || '-', formatDateID(session.sessionDate), session.overall]);
-        grandTotal += session.overallVal;
-        grandCount++;
-    });
-  });
-
-  const grandAvg = grandCount > 0 ? grandTotal / grandCount : 0;
-  const grandLabelType: QuestionType = grandAvg > 5 ? 'slider' : 'star';
-  const grandDisplay = `${grandAvg.toFixed(2)} (${getScoreLabel(grandAvg, grandLabelType)})`;
-
-  summaryRows.push(['', '', '', 'RATA-RATA TOTAL', grandDisplay]);
-
-  // Excel doesn't paginate physically, but we put signature right after
-  const rekapFinalRows = [...infoData, ['B. REKAPITULASI NILAI KESELURUHAN'], [], summaryHeader, ...summaryRows, [], ...getSigRows()];
-
-  const rekapWs = XLSX.utils.aoa_to_sheet(rekapFinalRows);
-  XLSX.utils.book_append_sheet(wb, rekapWs, 'B. Rekapitulasi');
-
-  // --- C. PENYELENGGARAAN ---
-  const procRows: any[] = [...infoData, ['C. EVALUASI PENYELENGGARAAN']];
-  
-  if (training.processOrganizer && training.processOrganizer.name) {
-      procRows.push([`Penanggung Jawab: ${training.processOrganizer.name}`]);
-  }
-  
-  procRows.push([]);
-  procRows.push(['No', 'Hal-hal yang dievaluasi', 'Kurang', 'Sedang', 'Baik', 'Sgt.Baik']);
-  
-  let procNo = 1;
-  training.processQuestions.filter(q => q.type !== 'text').forEach(q => {
-      const dist = data.process.distributions[q.id] || { k:'0.0%', s:'0.0%', b:'0.0%', sb:'0.0%' };
-      procRows.push([
-          procNo++,
-          q.label, 
-          dist.k, dist.s, dist.b, dist.sb
-      ]);
-  });
-  
-  const procTextQs = training.processQuestions.filter(q => q.type === 'text');
-  if (procTextQs.length > 0) {
-      procRows.push([]);
-      procRows.push(['Komentar / Saran Penyelenggaraan (Split):']);
-      procTextQs.forEach(q => {
-          const cmts = data.process.comments[q.id];
-          if (cmts && cmts.length > 0) {
-             procRows.push([`[${q.label}]`]);
-             // SPLIT 2 COLUMNS
-             const split = splitCommentsToPairs(cmts);
-             split.forEach(row => {
-                 procRows.push(['', row[0], row[1]]);
-             });
-          }
-      });
-  }
-
-  procRows.push(...getSigRows());
-
-  const procWs = XLSX.utils.aoa_to_sheet(procRows);
-  XLSX.utils.book_append_sheet(wb, procWs, 'C. Penyelenggaraan');
-
-  XLSX.writeFile(wb, `Laporan_SIMEP_${training.title.replace(/\s+/g, '_')}.xlsx`);
-};
-
 export const exportToWord = async (training: Training) => {
   const responses = await getResponses(training.id);
   const settings = await getSettings(); 
@@ -785,6 +992,32 @@ export const exportToWord = async (training: Training) => {
   sections.push(new Paragraph({ text: "A. Evaluasi Detail Fasilitator", heading: HeadingLevel.HEADING_2 }));
   const flatSessions = getFlatChronologicalSessions(data.facilitators);
   flatSessions.forEach((session, idx) => {
+    // Find matching facilitator config to get custom labels and hidden IDs
+    const facConfig = training.facilitators.find(f => 
+        f.name.trim().toLowerCase() === session.name.trim().toLowerCase() && 
+        f.subject.trim().toLowerCase() === session.subject.trim().toLowerCase()
+    );
+
+    const hiddenIds = facConfig?.hiddenQuestionIds || [];
+    const customLabels = facConfig?.customLabels || {};
+
+    // 1. Map questions with custom labels
+    const mappedQuestions = training.facilitatorQuestions.map(q => ({
+        ...q,
+        label: customLabels[q.id] || q.label
+    }));
+
+    // 2. Group questions by label
+    const groups: Record<string, { ids: string[], type: QuestionType, label: string }> = {};
+    mappedQuestions.forEach(q => {
+        const key = q.label.trim();
+        if (!groups[key]) {
+            groups[key] = { ids: [], type: q.type, label: q.label };
+        }
+        groups[key].ids.push(q.id);
+    });
+    const groupedQuestions = Object.values(groups);
+
     sections.push(new Paragraph({ 
         children: [new TextRun({ text: `Nama Fasilitator: ${session.name}`, color: "4F46E5", bold: true })], 
         spacing: { before: 200 } 
@@ -801,18 +1034,37 @@ export const exportToWord = async (training: Training) => {
             ],
         }),
     ];
-    training.facilitatorQuestions.filter(q => q.type !== 'text').forEach(q => {
-        rows.push(new TableRow({
-            children: [
-            new TableCell({ children: [new Paragraph(q.label)] }),
-            new TableCell({ children: [new Paragraph(session.averages[q.id] || "0.00")] }),
-            ],
-        }));
-    });
+
+    // Filter and Calculate Scores
+    let totalScore = 0;
+    let totalCount = 0;
+    let dominantType: QuestionType = 'slider';
+
+    groupedQuestions
+        .filter(q => q.type !== 'text')
+        .filter(q => !q.ids.every(id => hiddenIds.includes(id))) // Only show if NOT ALL hidden
+        .forEach(q => {
+            const avg = calculateGroupAverage(session.responses, q.ids);
+            const label = getScoreLabel(avg, q.type);
+            rows.push(new TableRow({
+                children: [
+                new TableCell({ children: [new Paragraph(q.label)] }),
+                new TableCell({ children: [new Paragraph(`${avg.toFixed(2)} (${label})`)] }),
+                ],
+            }));
+            
+            totalScore += avg;
+            totalCount++;
+            dominantType = q.type;
+        });
+
+    const sessionOverall = totalCount > 0 ? totalScore / totalCount : 0;
+    const sessionOverallStr = `${sessionOverall.toFixed(2)} (${getScoreLabel(sessionOverall, dominantType)})`;
+
     rows.push(new TableRow({
         children: [
             new TableCell({ children: [new Paragraph({ text: "Rata-rata Keseluruhan", bold: true })] }),
-            new TableCell({ children: [new Paragraph({ text: session.overall, bold: true })] }),
+            new TableCell({ children: [new Paragraph({ text: sessionOverallStr, bold: true })] }),
         ],
     }));
     sections.push(new Table({
@@ -829,9 +1081,9 @@ export const exportToWord = async (training: Training) => {
     }));
 
     // Comments Section (Split 2 Columns)
-    const textQs = training.facilitatorQuestions.filter(q => q.type === 'text');
+    const textQs = groupedQuestions.filter(q => q.type === 'text');
     textQs.forEach(q => {
-        const comments = session.comments[q.id];
+        const comments = getGroupTextAnswers(session.responses, q.ids);
         if (comments && comments.length > 0) {
             sections.push(new Paragraph({ text: `Komentar - ${q.label}:`, bold: true, spacing: { before: 100 } }));
             
@@ -884,15 +1136,55 @@ export const exportToWord = async (training: Training) => {
   
   sortedNames.forEach((name) => {
       data.facilitators[name].forEach((session: SessionExportData) => {
+        // Recalculate overall for recap as well to match detailed view
+        const facConfig = training.facilitators.find(f => 
+            f.name.trim().toLowerCase() === session.name.trim().toLowerCase() && 
+            f.subject.trim().toLowerCase() === session.subject.trim().toLowerCase()
+        );
+        const hiddenIds = facConfig?.hiddenQuestionIds || [];
+        const customLabels = facConfig?.customLabels || {};
+
+        const mappedQuestions = training.facilitatorQuestions.map(q => ({
+            ...q,
+            label: customLabels[q.id] || q.label
+        }));
+
+        const groups: Record<string, { ids: string[], type: QuestionType, label: string }> = {};
+        mappedQuestions.forEach(q => {
+            const key = q.label.trim();
+            if (!groups[key]) {
+                groups[key] = { ids: [], type: q.type, label: q.label };
+            }
+            groups[key].ids.push(q.id);
+        });
+        const groupedQuestions = Object.values(groups);
+
+        let totalScore = 0;
+        let totalCount = 0;
+        let dominantType: QuestionType = 'slider';
+
+        groupedQuestions
+            .filter(q => q.type !== 'text')
+            .filter(q => !q.ids.every(id => hiddenIds.includes(id)))
+            .forEach(q => {
+                const avg = calculateGroupAverage(session.responses, q.ids);
+                totalScore += avg;
+                totalCount++;
+                dominantType = q.type;
+            });
+        
+        const sessionOverall = totalCount > 0 ? totalScore / totalCount : 0;
+        const sessionOverallStr = `${sessionOverall.toFixed(2)} (${getScoreLabel(sessionOverall, dominantType)})`;
+
         summaryRows.push(new TableRow({
             children: [
                 new TableCell({ children: [new Paragraph((no++).toString())] }),
                 new TableCell({ children: [new Paragraph(name)] }),
                 new TableCell({ children: [new Paragraph(session.subject || '-')] }),
-                new TableCell({ children: [new Paragraph({ text: session.overall, bold: true })] }),
+                new TableCell({ children: [new Paragraph({ text: sessionOverallStr, bold: true })] }),
             ]
         }));
-        grandTotal += session.overallVal; grandCount++;
+        grandTotal += sessionOverall; grandCount++;
       });
   });
 
