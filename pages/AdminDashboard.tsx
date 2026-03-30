@@ -220,6 +220,21 @@ export const AdminDashboard: React.FC = () => {
           finalWa = '0' + finalWa.substring(2);
       }
 
+      // Normalize name for similarity check (remove non-alphanumeric)
+      const normalizeName = (name: string) => name.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+      const normalizedNewName = normalizeName(newContact.name);
+
+      // Check for duplicates
+      const isDuplicate = contacts.some(c => 
+          normalizeName(c.name) === normalizedNewName ||
+          (finalWa && c.whatsapp && c.whatsapp.trim() === finalWa)
+      );
+
+      if (isDuplicate) {
+          alert("Nama atau nomor WhatsApp sudah terdaftar di database kontak.");
+          return;
+      }
+
       const contactToSave: Contact = {
           id: uuidv4(),
           name: newContact.name,
@@ -246,6 +261,23 @@ export const AdminDashboard: React.FC = () => {
           finalWa = '0' + finalWa.substring(3);
       } else if (finalWa.startsWith('62')) {
           finalWa = '0' + finalWa.substring(2);
+      }
+
+      // Normalize name for similarity check (remove non-alphanumeric)
+      const normalizeName = (name: string) => name.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+      const normalizedSelectedName = normalizeName(selectedContact.name);
+
+      // Check for duplicates (excluding the current contact)
+      const isDuplicate = contacts.some(c => 
+          c.id !== selectedContact.id && (
+              normalizeName(c.name) === normalizedSelectedName ||
+              (finalWa && c.whatsapp && c.whatsapp.trim() === finalWa)
+          )
+      );
+
+      if (isDuplicate) {
+          alert("Nama atau nomor WhatsApp sudah terdaftar di database kontak.");
+          return;
       }
 
       await saveContact({ ...selectedContact, whatsapp: finalWa });
@@ -595,6 +627,7 @@ export const AdminDashboard: React.FC = () => {
                             <div>
                                 <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Nama Lengkap & Gelar</label>
                                 <input type="text" value={newContact.name} onChange={e => setNewContact({...newContact, name: e.target.value})} className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none" placeholder="Dr. Fulan, S.Kom..." />
+                                {isDuplicateName && <p className="text-xs text-amber-600 mt-1 font-medium flex items-center gap-1"><AlertCircle size={12}/> Peringatan: Nama ini mungkin sudah ada di database.</p>}
                             </div>
                             <div>
                                 <label className="block text-xs font-bold text-slate-500 uppercase mb-1">WhatsApp</label>
@@ -604,6 +637,7 @@ export const AdminDashboard: React.FC = () => {
                                     </select>
                                     <input type="text" value={newContact.whatsapp} onChange={e => handleWaInput(e.target.value)} className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm font-mono focus:ring-2 focus:ring-indigo-500 outline-none" placeholder="08..." />
                                 </div>
+                                {isDuplicatePhone && <p className="text-xs text-amber-600 mt-1 font-medium flex items-center gap-1"><AlertCircle size={12}/> Peringatan: Nomor WhatsApp ini sudah terdaftar.</p>}
                             </div>
                             
                             <button onClick={() => setShowExtraFields(!showExtraFields)} className="text-xs font-bold text-indigo-600 hover:underline flex items-center gap-1">
