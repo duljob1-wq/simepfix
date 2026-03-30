@@ -4,7 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { Facilitator, Question, Training, Contact, TrainingTheme } from '../types';
 import { saveTraining, getTrainingById, getGlobalQuestions, getContacts, saveContact, getSettings, getTrainings, getThemes, updateResponseMetadata } from '../services/storageService';
 import { QuestionBuilder } from '../components/QuestionBuilder';
-import { ArrowLeft, Save, Plus, X, Calendar, UserPlus, Settings, CheckCircle, Lock, Unlock, MessageSquare, Trash2, FileText, Edit2, Phone, ChevronDown, Check, FolderOpen, Clock, Hash, UserCheck, MapPin, Monitor, User, PenTool, RefreshCw } from 'lucide-react';
+import { ArrowLeft, Save, Plus, X, Calendar, UserPlus, Settings, CheckCircle, Lock, Unlock, MessageSquare, Trash2, FileText, Edit2, Phone, ChevronDown, Check, FolderOpen, Clock, Hash, UserCheck, MapPin, Monitor, User, PenTool, RefreshCw, AlertCircle } from 'lucide-react';
 
 export const CreateTraining: React.FC = () => {
   const navigate = useNavigate();
@@ -336,6 +336,21 @@ export const CreateTraining: React.FC = () => {
       if (finalWa.startsWith('62')) finalWa = '0' + finalWa.substring(2);
       else if (finalWa.startsWith('+62')) finalWa = '0' + finalWa.substring(3);
 
+      // Normalize name for similarity check (remove non-alphanumeric)
+      const normalizeName = (name: string) => name.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+      const normalizedNewName = normalizeName(pendingContactName);
+
+      // Check for duplicates
+      const isDuplicate = savedContacts.some(c => 
+          normalizeName(c.name) === normalizedNewName ||
+          (finalWa && c.whatsapp && c.whatsapp.trim() === finalWa)
+      );
+
+      if (isDuplicate) {
+          alert("Nama atau nomor WhatsApp sudah terdaftar di database kontak.");
+          return;
+      }
+
       const newContact: Contact = {
           id: uuidv4(),
           name: pendingContactName,
@@ -436,6 +451,10 @@ export const CreateTraining: React.FC = () => {
     setIsSaving(false);
     navigate('/admin/dashboard');
   };
+
+    const normalizeName = (name: string) => name.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+    const isDuplicateName = pendingContactName.length > 2 && savedContacts.some(c => normalizeName(c.name) === normalizeName(pendingContactName));
+    const isDuplicatePhone = pendingContactWa.length > 4 && savedContacts.some(c => c.whatsapp.replace(/[^0-9]/g, '') === pendingContactWa.replace(/[^0-9]/g, ''));
 
   return (
     <div className="min-h-screen bg-slate-50 pb-20">
@@ -651,11 +670,13 @@ export const CreateTraining: React.FC = () => {
                       <div>
                           <label className="block text-xs font-bold text-slate-500 uppercase mb-1">NAMA FASILITATOR</label>
                           <input type="text" value={pendingContactName} onChange={e => setPendingContactName(e.target.value)} className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm bg-slate-50 font-bold text-slate-700 outline-none" />
+                          {isDuplicateName && <p className="text-xs text-amber-600 mt-1 font-medium flex items-center gap-1"><AlertCircle size={12}/> Peringatan: Nama ini mungkin sudah ada di database.</p>}
                       </div>
                       <div>
                           <label className="block text-xs font-bold text-slate-500 uppercase mb-1">NOMOR WHATSAPP</label>
                           <input type="text" value={pendingContactWa} onChange={e => setPendingContactWa(e.target.value)} className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none font-mono" placeholder="08..." autoFocus/>
                           <p className="text-[10px] text-slate-400 mt-1">Otomatis diformat ke 62...</p>
+                          {isDuplicatePhone && <p className="text-xs text-amber-600 mt-1 font-medium flex items-center gap-1"><AlertCircle size={12}/> Peringatan: Nomor WhatsApp ini sudah terdaftar.</p>}
                       </div>
                   </div>
 
