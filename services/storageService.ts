@@ -53,11 +53,11 @@ const ensureDefaults = async () => {
         // Default Settings including Passwords
         const settingsRef = doc(db, 'settings', 'global');
         batch.set(settingsRef, {
-            waApiKey: '',
+            waApiKey: 'EK2EfGtaTtnQxdwTnWW7',
             waBaseUrl: 'https://api.fonnte.com/send',
-            waHeader: 'SIMEP Report',
-            waFooter: 'Terima Kasih',
-            defaultTrainingDescription: 'Silakan isi evaluasi.',
+            waHeader: 'SIMEP - Laporan Evaluasi Otomatis --- UPT LATKESMAS MURNAJATI',
+            waFooter: 'Terima kasih telah memberikan yang terbaik !\nSIMEP (Sistem Informasi Monitoring dan Evaluasi Pelatihan).',
+            defaultTrainingDescription: 'Silakan isi evaluasi ini dengan objektif demi peningkatan kualitas pelatihan kami.',
             isGuestBookOpen: false,
             adminPassword: '12345',
             superAdminPassword: 'supersimep',
@@ -584,15 +584,21 @@ export const getSettings = async (): Promise<AppSettings> => {
         const docRef = doc(db, 'settings', 'global');
         const docSnap = await getDoc(docRef);
         if (docSnap.exists()) {
-            return docSnap.data() as AppSettings;
+            const data = docSnap.data() as AppSettings;
+            // Apply new defaults if empty or old default
+            if (!data.waApiKey) data.waApiKey = 'EK2EfGtaTtnQxdwTnWW7';
+            if (!data.waHeader || data.waHeader === 'SIMEP Report') data.waHeader = 'SIMEP - Laporan Evaluasi Otomatis --- UPT LATKESMAS MURNAJATI';
+            if (!data.waFooter || data.waFooter === 'Terima Kasih') data.waFooter = 'Terima kasih telah memberikan yang terbaik !\nSIMEP (Sistem Informasi Monitoring dan Evaluasi Pelatihan).';
+            if (!data.defaultTrainingDescription || data.defaultTrainingDescription === 'Silakan isi evaluasi.') data.defaultTrainingDescription = 'Silakan isi evaluasi ini dengan objektif demi peningkatan kualitas pelatihan kami.';
+            return data;
         }
         // Fallback default
         return {
-            waApiKey: '',
+            waApiKey: 'EK2EfGtaTtnQxdwTnWW7',
             waBaseUrl: 'https://api.fonnte.com/send',
-            waHeader: 'SIMEP Report',
-            waFooter: 'Terima Kasih',
-            defaultTrainingDescription: '',
+            waHeader: 'SIMEP - Laporan Evaluasi Otomatis --- UPT LATKESMAS MURNAJATI',
+            waFooter: 'Terima kasih telah memberikan yang terbaik !\nSIMEP (Sistem Informasi Monitoring dan Evaluasi Pelatihan).',
+            defaultTrainingDescription: 'Silakan isi evaluasi ini dengan objektif demi peningkatan kualitas pelatihan kami.',
             isGuestBookOpen: false,
             adminPassword: '12345',
             superAdminPassword: 'supersimep',
@@ -604,11 +610,11 @@ export const getSettings = async (): Promise<AppSettings> => {
     } catch (error) {
         console.error("Error getting settings:", error);
         return {
-            waApiKey: '',
+            waApiKey: 'EK2EfGtaTtnQxdwTnWW7',
             waBaseUrl: 'https://api.fonnte.com/send',
-            waHeader: 'SIMEP Report',
-            waFooter: 'Terima Kasih',
-            defaultTrainingDescription: '',
+            waHeader: 'SIMEP - Laporan Evaluasi Otomatis --- UPT LATKESMAS MURNAJATI',
+            waFooter: 'Terima kasih telah memberikan yang terbaik !\nSIMEP (Sistem Informasi Monitoring dan Evaluasi Pelatihan).',
+            defaultTrainingDescription: 'Silakan isi evaluasi ini dengan objektif demi peningkatan kualitas pelatihan kami.',
             isGuestBookOpen: false,
             adminPassword: '12345',
             superAdminPassword: 'supersimep',
