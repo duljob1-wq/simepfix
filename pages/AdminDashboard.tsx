@@ -165,6 +165,7 @@ export const AdminDashboard: React.FC = () => {
   };
 
   const handleCopyTraining = async (source: Training) => {
+    if (!confirm(`Salin pelatihan ini : Ya - Tidak`)) return;
     const copiedTraining: Training = { ...source, id: uuidv4(), accessCode: Math.random().toString(36).substring(2, 7).toUpperCase(), title: `${source.title} (Salinan)`, createdAt: Date.now(), reportedTargets: {} };
     await saveTraining(copiedTraining);
     refreshData();
