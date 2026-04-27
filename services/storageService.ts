@@ -173,6 +173,26 @@ export const saveResponse = async (response: Response): Promise<void> => {
     }
 };
 
+export const toggleCommentVisibility = async (responseId: string, questionId: string, isHidden: boolean): Promise<void> => {
+    try {
+        const responseRef = doc(db, 'responses', responseId);
+        const docSnap = await getDoc(responseRef);
+        if (docSnap.exists()) {
+            const data = docSnap.data() as Response;
+            let hiddenComments = data.hiddenComments || [];
+            if (isHidden) {
+                if (!hiddenComments.includes(questionId)) hiddenComments.push(questionId);
+            } else {
+                hiddenComments = hiddenComments.filter(id => id !== questionId);
+            }
+            await updateDoc(responseRef, { hiddenComments });
+        }
+    } catch (error) {
+        console.error("Error toggling comment visibility:", error);
+        throw error;
+    }
+};
+
 // NEW FUNCTION: Check if participant limit is reached for a specific context
 export const checkParticipantLimitReached = async (
     trainingId: string, 

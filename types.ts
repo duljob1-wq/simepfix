@@ -70,6 +70,7 @@ export interface Training {
   processTargets?: number[]; // Multi-targets for process
   processTarget?: number; // Deprecated (Single target)
   processReported?: boolean; // Deprecated (Single flag)
+  isHidden?: boolean; // Whether the training is hidden in the dashboard and reports lists
 }
 
 export interface Response {
@@ -80,6 +81,7 @@ export interface Response {
   targetSubject?: string; 
   answers: Record<string, string | number>; 
   timestamp: number;
+  hiddenComments?: string[]; // Array of question IDs where the comment is hidden
 }
 
 export interface GuestEntry {
