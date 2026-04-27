@@ -171,12 +171,6 @@ export const AdminDashboard: React.FC = () => {
     refreshData();
   };
 
-  const handleToggleTrainingVisibility = async (training: Training) => {
-    const updatedTraining = { ...training, isHidden: !training.isHidden };
-    await saveTraining(updatedTraining);
-    refreshData();
-  };
-
   const handleSaveVariable = async () => { if(!newQVar.label) return; await saveGlobalQuestion({ id: uuidv4(), label: newQVar.label, type: newQVar.type, category: newQVar.category, isDefault: newQVar.isDefault }); setNewQVar({ ...newQVar, label: '' }); refreshData(); };
   const handleUpdateGlobalType = async (q: GlobalQuestion, newType: QuestionType) => { await saveGlobalQuestion({ ...q, type: newType }); refreshData(); };
   const handleCreateTheme = () => { setActiveTheme({ id: uuidv4(), name: '', facilitatorQuestions: [], processQuestions: [] }); setIsEditingTheme(true); };
@@ -393,23 +387,8 @@ export const AdminDashboard: React.FC = () => {
       }
   };
 
-  const filteredMgmtTrainings = trainings.filter(t => { 
-    if (!isSuperAdmin && t.isHidden) return false;
-    const matchSearch = t.title.toLowerCase().includes(mgmtSearch.toLowerCase()); 
-    let matchDate = true; if (mgmtDateStart && mgmtDateEnd) { matchDate = (t.startDate <= mgmtDateEnd) && (t.endDate >= mgmtDateStart); } 
-    const matchMethod = filterMethod ? t.learningMethod === filterMethod : true; 
-    const matchLocation = filterLocation ? t.location === filterLocation : true; 
-    return matchSearch && matchDate && matchMethod && matchLocation; 
-  }).sort((a, b) => b.createdAt - a.createdAt);
-
-  const filteredReportTrainings = trainings.filter(t => { 
-    if (!isSuperAdmin && t.isHidden) return false;
-    const matchSearch = t.title.toLowerCase().includes(reportSearch.toLowerCase()); 
-    let matchDate = true; if (reportDateStart && reportDateEnd) { matchDate = (t.startDate <= reportDateEnd) && (t.endDate >= reportDateStart); } 
-    const matchMethod = reportFilterMethod ? t.learningMethod === reportFilterMethod : true; 
-    const matchLocation = reportFilterLocation ? t.location === reportFilterLocation : true; 
-    return matchSearch && matchDate && matchMethod && matchLocation; 
-  }).sort((a, b) => b.createdAt - a.createdAt);
+  const filteredMgmtTrainings = trainings.filter(t => { const matchSearch = t.title.toLowerCase().includes(mgmtSearch.toLowerCase()); let matchDate = true; if (mgmtDateStart && mgmtDateEnd) { matchDate = (t.startDate <= mgmtDateEnd) && (t.endDate >= mgmtDateStart); } const matchMethod = filterMethod ? t.learningMethod === filterMethod : true; const matchLocation = filterLocation ? t.location === filterLocation : true; return matchSearch && matchDate && matchMethod && matchLocation; }).sort((a, b) => b.createdAt - a.createdAt);
+  const filteredReportTrainings = trainings.filter(t => { const matchSearch = t.title.toLowerCase().includes(reportSearch.toLowerCase()); let matchDate = true; if (reportDateStart && reportDateEnd) { matchDate = (t.startDate <= reportDateEnd) && (t.endDate >= reportDateStart); } const matchMethod = reportFilterMethod ? t.learningMethod === reportFilterMethod : true; const matchLocation = reportFilterLocation ? t.location === reportFilterLocation : true; return matchSearch && matchDate && matchMethod && matchLocation; }).sort((a, b) => b.createdAt - a.createdAt);
   const filteredContacts = contacts.filter(c => c.name.toLowerCase().includes(contactSearch.toLowerCase()) || c.whatsapp.includes(contactSearch)).sort((a, b) => a.name.localeCompare(b.name));
 
   const openShareModal = (training: Training) => { const origin = window.location.origin; const baseUrl = origin.endsWith('/') ? origin.slice(0, -1) : origin; const cleanUrl = `${baseUrl}/#/evaluate/${training.id}`; setShareData({ shortUrl: cleanUrl, fullUrl: cleanUrl, title: training.title, accessCode: training.accessCode || 'N/A' }); setCopied(false); setShareTab('link'); setShowShareModal(true); };
@@ -500,17 +479,7 @@ export const AdminDashboard: React.FC = () => {
                             </div>
                             <div className="px-6 py-4 border-t border-slate-100 bg-slate-50/50 flex justify-between items-center">
                                 <button onClick={() => openShareModal(t)} className="text-indigo-600 text-sm font-semibold flex items-center gap-1 hover:text-indigo-800"><Share2 size={16}/> Bagikan</button>
-                                <div className="flex gap-1">
-                                    <Link to={`/admin/results/${t.id}`} className="p-2 text-slate-400 hover:text-indigo-600 transition" title="Lihat Hasil"><Eye size={18}/></Link>
-                                    <button onClick={() => handleCopyTraining(t)} className="p-2 text-slate-400 hover:text-blue-600 transition" title="Salin Pelatihan"><CopyIcon size={18}/></button>
-                                    <Link to={`/admin/edit/${t.id}`} className="p-2 text-slate-400 hover:text-amber-600 transition" title="Edit Pelatihan"><Pencil size={18}/></Link>
-                                    {isSuperAdmin && (
-                                        <button onClick={() => handleToggleTrainingVisibility(t)} className="p-2 text-slate-400 hover:text-slate-700 transition" title={t.isHidden ? "Tampilkan Pelatihan" : "Sembunyikan Pelatihan"}>
-                                            {t.isHidden ? <EyeOff size={18} className="text-red-500" /> : <Archive size={18} />}
-                                        </button>
-                                    )}
-                                    <button onClick={() => { setDeleteTargetId(t.id); setDeleteAuthInput(''); }} className="p-2 text-slate-400 hover:text-red-600 transition" title="Hapus Pelatihan"><Trash2 size={18}/></button>
-                                </div>
+                                <div className="flex gap-1"><Link to={`/admin/results/${t.id}`} className="p-2 text-slate-400 hover:text-indigo-600 transition"><Eye size={18}/></Link><button onClick={() => handleCopyTraining(t)} className="p-2 text-slate-400 hover:text-blue-600 transition"><CopyIcon size={18}/></button><Link to={`/admin/edit/${t.id}`} className="p-2 text-slate-400 hover:text-amber-600 transition"><Pencil size={18}/></Link><button onClick={() => { setDeleteTargetId(t.id); setDeleteAuthInput(''); }} className="p-2 text-slate-400 hover:text-red-600 transition"><Trash2 size={18}/></button></div>
                             </div>
                         </div>
                     );})}

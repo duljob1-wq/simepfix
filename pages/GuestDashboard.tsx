@@ -97,7 +97,6 @@ export const GuestDashboard: React.FC = () => {
   };
 
   const filteredTrainings = trainings.filter(t => {
-      if (t.isHidden) return false;
       const matchSearch = t.title.toLowerCase().includes(search.toLowerCase());
       let matchDate = true;
       if (filterDateStart && filterDateEnd) {
