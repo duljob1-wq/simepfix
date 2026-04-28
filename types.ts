@@ -79,8 +79,8 @@ export interface Response {
   targetName?: string; 
   targetSubject?: string; 
   answers: Record<string, string | number>; 
+  hiddenAnswers?: string[];
   timestamp: number;
-  hiddenComments?: string[]; // Array of question IDs where the comment is hidden
 }
 
 export interface GuestEntry {

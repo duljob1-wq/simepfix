@@ -173,26 +173,6 @@ export const saveResponse = async (response: Response): Promise<void> => {
     }
 };
 
-export const toggleCommentVisibility = async (responseId: string, questionId: string, isHidden: boolean): Promise<void> => {
-    try {
-        const responseRef = doc(db, 'responses', responseId);
-        const docSnap = await getDoc(responseRef);
-        if (docSnap.exists()) {
-            const data = docSnap.data() as Response;
-            let hiddenComments = data.hiddenComments || [];
-            if (isHidden) {
-                if (!hiddenComments.includes(questionId)) hiddenComments.push(questionId);
-            } else {
-                hiddenComments = hiddenComments.filter(id => id !== questionId);
-            }
-            await updateDoc(responseRef, { hiddenComments });
-        }
-    } catch (error) {
-        console.error("Error toggling comment visibility:", error);
-        throw error;
-    }
-};
-
 // NEW FUNCTION: Check if participant limit is reached for a specific context
 export const checkParticipantLimitReached = async (
     trainingId: string, 
@@ -506,6 +486,30 @@ export const updateResponseMetadata = async (
         console.log(`Updated responses for ${oldName} (${oldSubject}) -> ${newName} (${newSubject})`);
     } catch (error) {
         console.error("Error updating response metadata:", error);
+        throw error;
+    }
+};
+
+// --- NEW FEATURE: TOGGLE COMMENT VISIBILITY (SUPERADMIN) ---
+export const toggleResponseCommentVisibility = async (responseId: string, questionId: string, isHidden: boolean): Promise<void> => {
+    try {
+        const responseRef = doc(db, 'responses', responseId);
+        const responseSnap = await getDoc(responseRef);
+        if (!responseSnap.exists()) return;
+        
+        const data = responseSnap.data() as Response;
+        const currentHidden = data.hiddenAnswers || [];
+        
+        let newHidden = currentHidden;
+        if (isHidden) {
+            if (!newHidden.includes(questionId)) newHidden.push(questionId);
+        } else {
+            newHidden = newHidden.filter(id => id !== questionId);
+        }
+        
+        await setDoc(responseRef, { hiddenAnswers: newHidden }, { merge: true });
+    } catch (error) {
+        console.error("Error toggling comment visibility:", error);
         throw error;
     }
 };

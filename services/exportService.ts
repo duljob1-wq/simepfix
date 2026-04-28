@@ -139,10 +139,7 @@ const processDataForExport = (training: Training, responses: Response[]) => {
 
           training.facilitatorQuestions.forEach(q => {
             if (q.type === 'text') {
-                session.comments[q.id] = session.responses
-                    .filter((r: any) => !r.hiddenComments?.includes(q.id))
-                    .map((r: any) => r.answers[q.id])
-                    .filter((a: any) => a && a.trim() !== '');
+                session.comments[q.id] = session.responses.map((r: any) => r.answers[q.id]).filter((a: any) => a && a.trim() !== '');
             } else {
                 dominantType = q.type;
                 const scores = session.responses.map((r: any) => r.answers[q.id]).filter((v: any) => typeof v === 'number');
@@ -175,10 +172,7 @@ const processDataForExport = (training: Training, responses: Response[]) => {
 
   training.processQuestions.forEach(q => {
     if (q.type === 'text') {
-      result.process.comments[q.id] = procResponses
-          .filter(r => !r.hiddenComments?.includes(q.id))
-          .map((r: any) => r.answers[q.id])
-          .filter((a: any) => a && a.trim() !== '');
+      result.process.comments[q.id] = procResponses.map((r: any) => r.answers[q.id]).filter((a: any) => a && a.trim() !== '');
     } else {
       dominantProcType = q.type;
       const scores = procResponses.map((r: any) => r.answers[q.id]).filter((v: any) => typeof v === 'number');
@@ -530,8 +524,7 @@ const getGroupTextAnswers = (responses: Response[], qIds: string[]) => {
     responses.forEach(r => {
         qIds.forEach(qId => {
             const val = r.answers[qId];
-            const isHidden = !!r.hiddenComments?.includes(qId);
-            if (!isHidden && val && typeof val === 'string' && val.trim() !== '') {
+            if (val && typeof val === 'string' && val.trim() !== '') {
                 answers.push(val.trim());
             }
         });

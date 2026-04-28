@@ -1,7 +1,7 @@
 
 import React, { useEffect, useState, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { getTrainingById, getResponses, deleteFacilitatorResponses, getSettings, saveTraining, renameFacilitator, toggleFacilitatorVisibility, updateFacilitatorSubject, updateFacilitatorsOrder, hideFacilitatorQuestions, updateFacilitatorQuestionLabel, toggleCommentVisibility } from '../services/storageService';
+import { getTrainingById, getResponses, deleteFacilitatorResponses, getSettings, saveTraining, renameFacilitator, toggleFacilitatorVisibility, updateFacilitatorSubject, updateFacilitatorsOrder, hideFacilitatorQuestions, updateFacilitatorQuestionLabel, toggleResponseCommentVisibility } from '../services/storageService';
 import { Training, Response, QuestionType, Question } from '../types';
 import { ArrowLeft, User, Layout, Quote, Calendar, Award, Trash2, Lock, UserCheck, AlertTriangle, RefreshCw, Eye, EyeOff, Save, CheckCircle, Pencil, X, ArrowUp, ArrowDown, Settings2, CheckSquare, Square, BarChart2, Edit2, Check, ListOrdered, Globe, Filter } from 'lucide-react';
 
@@ -104,15 +104,15 @@ const getCombinedAverage = (responses: Response[], qIds: string[]) => {
     return Number((sum / validValues.length).toFixed(2));
 };
 
-const getCombinedTextAnswers = (responses: Response[], qIds: string[], isSuperAdmin?: boolean) => {
-    const texts: { text: string; responseId: string; qId: string; isHidden: boolean }[] = [];
+const getCombinedTextAnswers = (responses: Response[], qIds: string[], isSuperAdmin: boolean) => {
+    const texts: { val: string, id: string, qId: string, isHidden: boolean }[] = [];
     responses.forEach(r => {
         qIds.forEach(qId => {
             const val = r.answers[qId];
-            const isHidden = !!r.hiddenComments?.includes(qId);
             if (typeof val === 'string' && val.trim() !== '') {
-                if (!isSuperAdmin && isHidden) return; // Hide from normal admin if hidden
-                texts.push({ text: val, responseId: r.id, qId, isHidden });
+                const isHidden = r.hiddenAnswers?.includes(qId) || false;
+                if (isHidden && !isSuperAdmin) return;
+                texts.push({ val, id: r.id, qId, isHidden });
             }
         });
     });
@@ -245,25 +245,6 @@ export const ResultsView: React.FC = () => {
   const [renameInput, setRenameInput] = useState('');
   const [isSavingName, setIsSavingName] = useState(false);
 
-  const handleToggleComment = async (responseId: string, qId: string, isHidden: boolean) => {
-      try {
-          await toggleCommentVisibility(responseId, qId, !isHidden);
-          // Optimistically update responses state
-          setResponses(prev => prev.map(r => {
-              if (r.id === responseId) {
-                  const hComments = r.hiddenComments || [];
-                  return {
-                      ...r,
-                      hiddenComments: !isHidden ? [...hComments, qId] : hComments.filter(id => id !== qId)
-                  };
-              }
-              return r;
-          }));
-      } catch (err) {
-          alert('Gagal mengubah visibilitas komentar.');
-      }
-  };
-
   // Edit Subject State (Superadmin)
   const [editingSubjectKey, setEditingSubjectKey] = useState<string | null>(null); 
   const [subjectInput, setSubjectInput] = useState('');
@@ -278,6 +259,26 @@ export const ResultsView: React.FC = () => {
   const [editingQuestionKey, setEditingQuestionKey] = useState<string | null>(null); // "sessionKey|questionId"
   const [questionLabelInput, setQuestionLabelInput] = useState('');
   const [isSavingLabel, setIsSavingLabel] = useState(false);
+
+  const handleToggleComment = async (responseId: string, qId: string, currentHidden: boolean) => {
+      try {
+          await toggleResponseCommentVisibility(responseId, qId, !currentHidden);
+          setResponses(prev => prev.map(r => {
+              if (r.id === responseId) {
+                  const hiddenAnswers = r.hiddenAnswers || [];
+                  return {
+                      ...r,
+                      hiddenAnswers: !currentHidden 
+                          ? [...hiddenAnswers, qId]
+                          : hiddenAnswers.filter(id => id !== qId)
+                  };
+              }
+              return r;
+          }));
+      } catch (error) {
+          alert('Gagal menyembunyikan komentar');
+      }
+  };
 
   useEffect(() => {
     const fetchData = async () => {
@@ -880,14 +881,28 @@ export const ResultsView: React.FC = () => {
                                             </tbody>
                                         </table>
                                         <div className="mt-6 px-4 pb-4">
-                                            {localGroupedQuestions.filter(q => q.type === 'text').map(q => (
-                                                <div key={q.label} className="mb-4">
-                                                    <h4 className="font-bold text-sm text-slate-700 mb-2 flex items-center gap-2"><Quote size={14} className="text-indigo-500"/> {q.label}</h4>
-                                                    <div className="bg-slate-50 rounded-lg p-3 border border-slate-100 space-y-2 max-h-40 overflow-y-auto custom-scrollbar">
-                                                        {getCombinedTextAnswers(session.items, q.ids, isSuperAdmin).length > 0 ? (getCombinedTextAnswers(session.items, q.ids, isSuperAdmin).map((ansObj, aIdx) => (<div key={aIdx} className={`flex items-start justify-between gap-4 border-b border-slate-200 last:border-0 pb-1 last:pb-0 ${ansObj.isHidden ? 'opacity-50 grayscale' : ''}`}><p className={`text-xs text-slate-600 italic ${ansObj.isHidden ? 'line-through' : ''}`}>"{ansObj.text}"</p>{isSuperAdmin && (<button onClick={() => handleToggleComment(ansObj.responseId, ansObj.qId, ansObj.isHidden)} className="p-1 hover:bg-slate-200 rounded text-slate-400 hover:text-indigo-600 transition" title={ansObj.isHidden ? 'Tampilkan Komentar' : 'Sembunyikan Komentar'}>{ansObj.isHidden ? <EyeOff size={14}/> : <Eye size={14}/>}</button>)}</div>))) : <span className="text-xs text-slate-400 italic">Tidak ada jawaban.</span>}
+                                            {localGroupedQuestions.filter(q => q.type === 'text').map(q => {
+                                                const answers = getCombinedTextAnswers(session.items, q.ids, isSuperAdmin);
+                                                return (
+                                                    <div key={q.label} className="mb-4">
+                                                        <h4 className="font-bold text-sm text-slate-700 mb-2 flex items-center gap-2"><Quote size={14} className="text-indigo-500"/> {q.label}</h4>
+                                                        <div className="bg-slate-50 rounded-lg p-3 border border-slate-100 space-y-2 max-h-40 overflow-y-auto custom-scrollbar">
+                                                            {answers.length > 0 ? (
+                                                                answers.map((ans, aIdx) => (
+                                                                    <div key={ans.id + ans.qId} className={`flex items-start justify-between border-b border-slate-200 last:border-0 pb-2 last:pb-0 pt-1 group ${ans.isHidden ? 'opacity-50' : ''}`}>
+                                                                        <p className="text-xs text-slate-600 italic leading-relaxed pr-4 flex-1 print:text-black">"{ans.val}"</p>
+                                                                        {isSuperAdmin && (
+                                                                            <button onClick={() => handleToggleComment(ans.id, ans.qId, ans.isHidden)} className="text-slate-400 hover:text-indigo-600 p-1 shrink-0 bg-white rounded shadow-sm border border-slate-200 print:hidden opacity-0 group-hover:opacity-100 transition-opacity" title={ans.isHidden ? "Tampilkan komentar" : "Sembunyikan komentar"}>
+                                                                                {ans.isHidden ? <EyeOff size={12}/> : <Eye size={12}/>}
+                                                                            </button>
+                                                                        )}
+                                                                    </div>
+                                                                ))
+                                                            ) : <span className="text-xs text-slate-400 italic">Tidak ada jawaban.</span>}
+                                                        </div>
                                                     </div>
-                                                </div>
-                                            ))}
+                                                );
+                                            })}
                                         </div>
                                     </div>
                                 ) : (
@@ -942,7 +957,30 @@ export const ResultsView: React.FC = () => {
                                                     {isRestored && <AlertTriangle size={12} className="text-amber-500 shrink-0 ml-1"/>}
                                                 </div>
 
-                                                <div className="mt-auto">{q.type === 'text' ? (<div className="bg-white/50 rounded-lg p-2 max-h-32 overflow-y-auto space-y-2 custom-scrollbar border border-slate-200/50">{getCombinedTextAnswers(session.items, q.ids, isSuperAdmin).length > 0 ? (getCombinedTextAnswers(session.items, q.ids, isSuperAdmin).map((ansObj, idx) => (<div key={idx} className={`flex justify-between items-start gap-1.5 text-[10px] text-slate-600 leading-relaxed border-b border-slate-100 last:border-0 pb-1 last:pb-0 ${ansObj.isHidden ? 'opacity-50 grayscale' : ''}`}><div className="flex gap-1.5"><Quote size={10} className="text-slate-400 min-w-[10px] mt-0.5" /><p className={`italic ${ansObj.isHidden ? 'line-through' : ''}`}>{ansObj.text}</p></div>{isSuperAdmin && (<button onClick={(e) => { e.stopPropagation(); handleToggleComment(ansObj.responseId, ansObj.qId, ansObj.isHidden); }} className="p-0.5 hover:bg-slate-200 rounded text-slate-400 hover:text-indigo-600 transition min-w-[14px]" title={ansObj.isHidden ? 'Tampilkan Komentar' : 'Sembunyikan Komentar'}>{ansObj.isHidden ? <EyeOff size={10}/> : <Eye size={10}/>}</button>)}</div>))) : ( <span className="text-[10px] text-slate-400">Tidak ada jawaban</span> )}</div>) : (<div className="flex flex-col gap-2"><div className="flex items-center justify-between pt-1"><span className="text-lg font-bold text-slate-800 tracking-tight">{avg}</span><span className={`text-[9px] px-1.5 py-0.5 rounded border font-bold uppercase tracking-wide ${labelColor}`}>{label}</span></div></div>)}</div>
+                                                <div className="mt-auto">{q.type === 'text' ? (() => {
+                                                    const answers = getCombinedTextAnswers(session.items, q.ids, isSuperAdmin);
+                                                    return (
+                                                        <div className="bg-white/50 rounded-lg p-2 max-h-32 overflow-y-auto space-y-2 custom-scrollbar border border-slate-200/50">
+                                                            {answers.length > 0 ? (
+                                                                answers.map((ans, idx) => (
+                                                                    <div key={ans.id + ans.qId} className={`flex items-start justify-between gap-1.5 border-b border-slate-100 last:border-0 pb-2 last:pb-0 pt-1 group ${ans.isHidden ? 'opacity-50' : ''}`}>
+                                                                        <div className="flex gap-1.5 flex-1">
+                                                                            <Quote size={10} className="text-slate-400 min-w-[10px] mt-0.5" />
+                                                                            <p className="text-[10px] text-slate-600 leading-relaxed italic print:text-black">{ans.val}</p>
+                                                                        </div>
+                                                                        {isSuperAdmin && (
+                                                                            <button onClick={(e) => { e.stopPropagation(); handleToggleComment(ans.id, ans.qId, ans.isHidden); }} className="text-slate-400 hover:text-indigo-600 p-1 shrink-0 bg-white rounded border border-slate-200 print:hidden opacity-0 group-hover:opacity-100 transition-opacity" title={ans.isHidden ? "Tampilkan komentar" : "Sembunyikan komentar"}>
+                                                                                {ans.isHidden ? <EyeOff size={10}/> : <Eye size={10}/>}
+                                                                            </button>
+                                                                        )}
+                                                                    </div>
+                                                                ))
+                                                            ) : (
+                                                                <span className="text-[10px] text-slate-400">Tidak ada jawaban</span>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })() : (<div className="flex flex-col gap-2"><div className="flex items-center justify-between pt-1"><span className="text-lg font-bold text-slate-800 tracking-tight">{avg}</span><span className={`text-[9px] px-1.5 py-0.5 rounded border font-bold uppercase tracking-wide ${labelColor}`}>{label}</span></div></div>)}</div>
                                             </div>
                                         )})}
                                     </div>
