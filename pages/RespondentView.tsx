@@ -274,11 +274,13 @@ export const RespondentView: React.FC = () => {
     }
 
     // Loop through targets and save
-    let isLimitReachedForAny = false;
+    let isSaveSuccess = true;
 
-    // Check limits before saving anything
-    if (!isAdminMode && training.participantLimit && training.participantLimit > 0) {
-        for (const target of targetsToSave) {
+    for (const target of targetsToSave) {
+        let shouldSave = true;
+
+        // Limit Check (Only relevant for real DB save, not admin mode)
+        if (!isAdminMode && training.participantLimit && training.participantLimit > 0) {
             const isLimitReached = await checkParticipantLimitReached(
                 training.id,
                 training.participantLimit,
@@ -287,37 +289,30 @@ export const RespondentView: React.FC = () => {
                 activeTab === 'facilitator' ? target.subject : undefined
             );
             if (isLimitReached) {
-                isLimitReachedForAny = true;
-                break;
+                shouldSave = false;
+                console.log(`Limit reached for ${target.name}. Skipping DB save.`);
             }
         }
-    }
 
-    if (isLimitReachedForAny) {
-        alert('Mohon maaf, batas jumlah maksimal responden untuk sesi/fasilitator ini telah tercapai.');
-        return;
-    }
+        if (shouldSave) {
+            const response: Response = {
+              id: uuidv4(),
+              trainingId: training.id,
+              type: activeTab,
+              targetName: target.name,
+              targetSubject: activeTab === 'facilitator' ? target.subject : undefined,
+              answers,
+              timestamp: Date.now()
+            };
 
-    for (const target of targetsToSave) {
-        const response: Response = {
-            id: uuidv4(),
-            trainingId: training.id,
-            type: activeTab,
-            targetName: target.name,
-            targetSubject: activeTab === 'facilitator' ? target.subject : undefined,
-            answers,
-            timestamp: Date.now()
-        };
-
-        if (!isAdminMode) {
             await saveResponse(response);
-        }
-        
-        // Automation Logic (Per Individual)
-        if (activeTab === 'facilitator' && facilitatorMode === 'select') {
-            checkAndSendAutoReport(training.id, target.id, target.name, 'facilitator').catch(console.error);
-        } else if (activeTab === 'process') {
-            checkAndSendAutoReport(training.id, '', '', 'process').catch(console.error);
+            
+            // Automation Logic (Per Individual)
+            if (activeTab === 'facilitator' && facilitatorMode === 'select') {
+                checkAndSendAutoReport(training.id, target.id, target.name, 'facilitator').catch(console.error);
+            } else if (activeTab === 'process') {
+                checkAndSendAutoReport(training.id, '', '', 'process').catch(console.error);
+            }
         }
 
         // Update Local History (Always, for UX)
