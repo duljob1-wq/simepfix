@@ -1,12 +1,13 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { useParams, Link, useLocation } from 'react-router-dom';
-import { getTrainingById, saveResponse, saveTraining, getRespondentHistory, saveRespondentHistory, checkParticipantLimitReached } from '../services/storageService';
+import { getTrainingById, saveResponse, saveTraining, getRespondentHistory, saveRespondentHistory, checkParticipantLimitReached, saveAttendance, hasSubmittedAttendanceToday, saveAttendanceHistory } from '../services/storageService';
 import { checkAndSendAutoReport } from '../services/whatsappService';
-import { Training, Response, Facilitator } from '../types';
+import { Training, Response, Facilitator, Attendance } from '../types';
 import { StarRating } from '../components/StarRating';
 import { SliderRating } from '../components/SliderRating';
 import { v4 as uuidv4 } from 'uuid';
-import { CheckCircle, AlertOctagon, User, Layout, ChevronRight, Home, ArrowLeft, Lock, Calendar, CheckSquare, ShieldCheck, Clock, AlertCircle, Users } from 'lucide-react';
+import { CheckCircle, AlertOctagon, User, Layout, ChevronRight, Home, ArrowLeft, Lock, Calendar, CheckSquare, ShieldCheck, Clock, AlertCircle, Users, Edit3 } from 'lucide-react';
+import SignatureCanvas from 'react-signature-canvas';
 
 type Tab = 'facilitator' | 'process';
 
@@ -27,6 +28,12 @@ export const RespondentView: React.FC = () => {
   const [activeTab, setActiveTab] = useState<Tab>('facilitator');
   const [submitted, setSubmitted] = useState(false);
 
+  // Attendance states
+  const [attendanceSubmitted, setAttendanceSubmitted] = useState(false);
+  const sigCanvas = useRef<SignatureCanvas>(null);
+  const [attendanceName, setAttendanceName] = useState('');
+  const [isSubmittingAttendance, setIsSubmittingAttendance] = useState(false);
+
   // Check Admin/Bypass Mode
   const queryParams = new URLSearchParams(location.search);
   const isAdminMode = queryParams.get('mode') === 'admin';
@@ -46,6 +53,15 @@ export const RespondentView: React.FC = () => {
   
   // Validation State
   const [validationError, setValidationError] = useState<string | null>(null);
+
+  // Check if today's facilitators are completed (for Attendance)
+  const hasCompletedTodaysFacilitators = useMemo(() => {
+      if (!training || !training.enableAttendance) return false;
+      const today = new Date().toISOString().split('T')[0];
+      const todaysFacs = training.facilitators.filter(f => f.sessionDate === today);
+      if (todaysFacs.length === 0) return false;
+      return todaysFacs.every(f => submittedFacilitatorIds.includes(f.id));
+  }, [training, submittedFacilitatorIds]);
 
   useEffect(() => {
     const loadTraining = async () => {
@@ -76,6 +92,8 @@ export const RespondentView: React.FC = () => {
       // Load History
       if (trainingId) {
           setSubmittedFacilitatorIds(getRespondentHistory(trainingId));
+          const today = new Date().toISOString().split('T')[0];
+          setAttendanceSubmitted(hasSubmittedAttendanceToday(trainingId, today));
       }
 
       setLoading(false);
@@ -109,6 +127,37 @@ export const RespondentView: React.FC = () => {
   const handleAnswerChange = (qId: string, val: string | number) => {
     setAnswers(prev => ({ ...prev, [qId]: val }));
     if (validationError) setValidationError(null); // Clear error on interaction
+  };
+
+  const handleAttendanceSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!training || !sigCanvas.current || attendanceName.trim() === '') return;
+    if (sigCanvas.current.isEmpty()) {
+       alert("Mohon tanda tangan terlebih dahulu.");
+       return;
+    }
+
+    setIsSubmittingAttendance(true);
+    const today = new Date().toISOString().split('T')[0];
+    const newAttendance: Attendance = {
+        id: uuidv4(),
+        trainingId: training.id,
+        date: today,
+        name: attendanceName.trim(),
+        signature: sigCanvas.current.getTrimmedCanvas().toDataURL('image/png'),
+        timestamp: Date.now()
+    };
+
+    try {
+        await saveAttendance(newAttendance);
+        saveAttendanceHistory(training.id, today);
+        setAttendanceSubmitted(true);
+    } catch (error) {
+        console.error("Gagal menyimpan presensi:", error);
+        alert("Terjadi kesalahan saat menyimpan presensi. Silakan coba lagi.");
+    } finally {
+        setIsSubmittingAttendance(false);
+    }
   };
 
   const resetForm = () => {
@@ -433,6 +482,47 @@ export const RespondentView: React.FC = () => {
              Penyelenggaraan
            </button>
         </div>
+
+        {hasCompletedTodaysFacilitators && !attendanceSubmitted && (
+          <div className="bg-gradient-to-br from-indigo-50 to-white rounded-xl shadow-sm p-5 border border-indigo-100 mb-5 animate-in fade-in zoom-in duration-500">
+             <div className="flex items-start gap-3 mb-4">
+                 <div className="bg-indigo-100 p-2 rounded-xl text-indigo-600 shrink-0">
+                     <Edit3 size={24} />
+                 </div>
+                 <div>
+                     <h3 className="font-bold text-indigo-900 text-base">Presensi Kehadiran</h3>
+                     <p className="text-xs text-indigo-700/80 mt-0.5 leading-relaxed">Anda telah menyelesaikan semua evaluasi materi untuk hari ini. Silakan isi daftar hadir berikut.</p>
+                 </div>
+             </div>
+             <form onSubmit={handleAttendanceSubmit} className="space-y-4">
+                 <div>
+                     <label className="block text-xs font-bold text-indigo-900 mb-1.5">Nama Lengkap</label>
+                     <input type="text" required value={attendanceName} onChange={e => setAttendanceName(e.target.value)} placeholder="Masukkan nama Anda..." className="w-full border-indigo-200 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" />
+                 </div>
+                 <div>
+                     <label className="block text-xs font-bold text-indigo-900 mb-1.5 flex justify-between">
+                         <span>Tanda Tangan</span>
+                         {sigCanvas.current && !sigCanvas.current.isEmpty() && (
+                             <button type="button" onClick={() => sigCanvas.current?.clear()} className="text-[10px] text-red-500 hover:underline">Hapus</button>
+                         )}
+                     </label>
+                     <div className="border border-indigo-200 bg-white rounded-lg overflow-hidden relative" style={{ height: 150 }}>
+                         <SignatureCanvas ref={sigCanvas} penColor="black" canvasProps={{width: 500, height: 150, className: 'sigCanvas w-full h-full cursor-crosshair'}} onEnd={() => { /* re-render to show clear button */ setAttendanceName(prev => prev) }} />
+                     </div>
+                 </div>
+                 <button type="submit" disabled={isSubmittingAttendance || attendanceName.trim() === ''} className="w-full bg-indigo-600 text-white font-bold py-2.5 rounded-lg flex items-center justify-center gap-2 hover:bg-indigo-700 transition disabled:opacity-50">
+                     {isSubmittingAttendance ? 'Menyimpan...' : 'Kirim Presensi'}
+                 </button>
+             </form>
+          </div>
+        )}
+
+        {hasCompletedTodaysFacilitators && attendanceSubmitted && (
+          <div className="bg-emerald-50 rounded-xl shadow-sm p-4 border border-emerald-100 mb-5 flex items-center gap-3 animate-in fade-in">
+              <div className="bg-emerald-100 p-1.5 rounded-full text-emerald-600 shrink-0"><CheckCircle size={20} /></div>
+              <p className="text-sm font-medium text-emerald-800">Presensi hari ini telah berhasil disimpan.</p>
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} className="space-y-3">
           

@@ -1,7 +1,7 @@
 
 import React, { useEffect, useState, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { getTrainingById, getResponses, deleteFacilitatorResponses, getSettings, saveTraining, renameFacilitator, toggleFacilitatorVisibility, updateFacilitatorSubject, updateFacilitatorsOrder, hideFacilitatorQuestions, updateFacilitatorQuestionLabel, toggleResponseCommentVisibility } from '../services/storageService';
+import { getTrainingById, getResponses, deleteFacilitatorResponses, getSettings, saveTraining, renameFacilitator, toggleFacilitatorVisibility, updateFacilitatorSubject, updateFacilitatorsOrder, hideFacilitatorQuestions, updateFacilitatorQuestionLabel, toggleResponseCommentVisibility, getAttendances } from '../services/storageService';
 import { Training, Response, QuestionType, Question } from '../types';
 import { ArrowLeft, User, Layout, Quote, Calendar, Award, Trash2, Lock, UserCheck, AlertTriangle, RefreshCw, Eye, EyeOff, Save, CheckCircle, Pencil, X, ArrowUp, ArrowDown, Settings2, CheckSquare, Square, BarChart2, Edit2, Check, ListOrdered, Globe, Filter } from 'lucide-react';
 
@@ -215,7 +215,8 @@ export const ResultsView: React.FC = () => {
   
   const [training, setTraining] = useState<Training | undefined>(undefined);
   const [responses, setResponses] = useState<Response[]>([]);
-  const [activeTab, setActiveTab] = useState<'facilitator' | 'process'>('facilitator');
+  const [attendances, setAttendances] = useState<any[]>([]);
+  const [activeTab, setActiveTab] = useState<'facilitator' | 'process' | 'attendance'>('facilitator');
 
   const isGuest = sessionStorage.getItem('isGuest') === 'true';
   const isSuperAdmin = sessionStorage.getItem('isSuperAdmin') === 'true';
@@ -285,6 +286,7 @@ export const ResultsView: React.FC = () => {
         if (trainingId) {
             setTraining(await getTrainingById(trainingId));
             setResponses(await getResponses(trainingId));
+            setAttendances(await getAttendances(trainingId));
             const s = await getSettings();
             if (s.deletePassword) setSysDeletePass(s.deletePassword);
         }
@@ -702,6 +704,14 @@ export const ResultsView: React.FC = () => {
                     >
                         Penyelenggaraan
                     </button>
+                    {training?.enableAttendance && (
+                        <button
+                            onClick={() => { setActiveTab('attendance'); setShowRestoredData(false); }}
+                            className={`px-4 py-1.5 rounded-md text-sm font-semibold transition ${activeTab === 'attendance' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                        >
+                            Presensi
+                        </button>
+                    )}
                 </div>
             </div>
           </div>
@@ -740,13 +750,45 @@ export const ResultsView: React.FC = () => {
             </div>
         )}
 
-        {flatSessions.length === 0 ? (
+        {activeTab === 'attendance' ? (
+            attendances.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-24 bg-white rounded-2xl border border-dashed border-slate-300">
+                    <div className="bg-slate-50 p-4 rounded-full mb-3 text-slate-400"><Layout size={32} /></div>
+                    <h3 className="text-lg font-semibold text-slate-700">Belum Ada Presensi</h3>
+                    <p className="text-slate-500 text-sm">Belum ada responden yang mengisi presensi.</p>
+                </div>
+            ) : (
+                <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                    <table className="w-full text-left text-sm whitespace-nowrap">
+                        <thead className="bg-slate-50 border-b border-slate-100 text-slate-500 uppercase text-xs">
+                            <tr>
+                                <th className="px-6 py-4 font-bold">No</th>
+                                <th className="px-6 py-4 font-bold">Nama</th>
+                                <th className="px-6 py-4 font-bold">Tanggal</th>
+                                <th className="px-6 py-4 font-bold">Tanda Tangan</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                            {attendances.map((att, i) => (
+                                <tr key={att.id} className="hover:bg-slate-50 transition">
+                                    <td className="px-6 py-4 text-slate-500">{i + 1}</td>
+                                    <td className="px-6 py-4 font-bold text-slate-800">{att.name}</td>
+                                    <td className="px-6 py-4 text-slate-600">{formatDateID(att.date + "T00:00:00Z").split(' ')[0] /* just date */}</td>
+                                    <td className="px-6 py-4"><img src={att.signature} alt="TTD" className="h-10 object-contain mix-blend-multiply border border-slate-200 p-1 rounded bg-white" /></td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            )
+        ) : (
+          flatSessions.length === 0 ? (
              <div className="flex flex-col items-center justify-center py-24 bg-white rounded-2xl border border-dashed border-slate-300">
                 <div className="bg-slate-50 p-4 rounded-full mb-3 text-slate-400"><Layout size={32} /></div>
                 <h3 className="text-lg font-semibold text-slate-700">Belum Ada Data</h3>
                 <p className="text-slate-500 text-sm">Belum ada responden yang mengisi kategori ini.</p>
              </div>
-        ) : (
+          ) : (
             <div className="space-y-6">
                 {flatSessions.map((session, idx) => {
                     const dateStr = session.date ? formatDateID(session.date) : '';
@@ -990,6 +1032,7 @@ export const ResultsView: React.FC = () => {
                     );
                 })}
             </div>
+          )
         )}
 
         {/* FLOATING ACTION BAR FOR DELETE VARIABLES */}
