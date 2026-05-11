@@ -4,7 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { Facilitator, Question, Training, Contact, TrainingTheme } from '../types';
 import { saveTraining, getTrainingById, getGlobalQuestions, getContacts, saveContact, getSettings, getTrainings, getThemes, updateResponseMetadata } from '../services/storageService';
 import { QuestionBuilder } from '../components/QuestionBuilder';
-import { ArrowLeft, Save, Plus, X, Calendar, UserPlus, Settings, CheckCircle, Lock, Unlock, MessageSquare, Trash2, FileText, Edit2, Phone, ChevronDown, Check, FolderOpen, Clock, Hash, UserCheck, MapPin, Monitor, User, PenTool, RefreshCw, AlertCircle, FileSignature } from 'lucide-react';
+import { ArrowLeft, Save, Plus, X, Calendar, UserPlus, Settings, CheckCircle, Lock, Unlock, MessageSquare, Trash2, FileText, Edit2, Phone, ChevronDown, Check, FolderOpen, Clock, Hash, UserCheck, MapPin, Monitor, User, PenTool, RefreshCw, AlertCircle } from 'lucide-react';
 
 export const CreateTraining: React.FC = () => {
   const navigate = useNavigate();
@@ -35,7 +35,6 @@ export const CreateTraining: React.FC = () => {
   
   // Config State
   const [allowManualInput, setAllowManualInput] = useState(false); // Default false
-  const [enableAttendance, setEnableAttendance] = useState(false); // Default false
 
   // Facilitators
   const [facilitators, setFacilitators] = useState<Facilitator[]>([]);
@@ -157,7 +156,6 @@ export const CreateTraining: React.FC = () => {
             setProcessQuestions(data.processQuestions);
             setTargets(data.targets || []);
             setAllowManualInput(data.allowManualInput || false);
-            setEnableAttendance(data.enableAttendance || false);
             
             if (data.learningMethod) { setUseMethod(true); setLearningMethod(data.learningMethod); }
             if (data.location) { setUseLocation(true); setLocation(data.location); }
@@ -446,8 +444,7 @@ export const CreateTraining: React.FC = () => {
       facilitators, facilitatorQuestions, processQuestions, createdAt: createdAt, targets: targets, reportedTargets: currentReportedTargets,
       processOrganizer: pOrganizer, processTargets: processTargets, learningMethod: useMethod ? learningMethod : undefined,
       location: useLocation ? location : undefined, participantLimit: participantLimit ? parseInt(participantLimit) : undefined,
-      allowManualInput: allowManualInput,
-      enableAttendance: enableAttendance 
+      allowManualInput: allowManualInput 
     };
 
     await saveTraining(newTraining);
@@ -631,18 +628,6 @@ export const CreateTraining: React.FC = () => {
                                         Izinkan Input Fasilitator Manual
                                     </label>
                                     <p className="text-xs text-slate-500 mt-0.5">Jika aktif, responden dapat mengetik nama fasilitator secara manual jika tidak ada di daftar.</p>
-                                </div>
-                            </div>
-
-                            {/* Enable Attendance Feature */}
-                            <div className="flex items-center gap-3 bg-white p-3 rounded-lg border border-emerald-200 mt-3">
-                                <div className="p-2 bg-emerald-100 rounded-lg text-emerald-600"><FileSignature size={16}/></div>
-                                <div className="flex-1">
-                                    <label className="text-sm font-bold text-slate-800 cursor-pointer select-none flex items-center gap-2">
-                                        <input type="checkbox" checked={enableAttendance} onChange={e => setEnableAttendance(e.target.checked)} className="rounded text-emerald-600 focus:ring-emerald-500" />
-                                        Aktifkan Fitur Presensi
-                                    </label>
-                                    <p className="text-xs text-slate-500 mt-0.5">Responden akan diminta mengisi daftar hadir (tanda tangan) setelah menyelesaikan semua evaluasi materi pada hari ini.</p>
                                 </div>
                             </div>
 

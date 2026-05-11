@@ -42,15 +42,6 @@ export interface Facilitator {
   customLabels?: Record<string, string>; // Override question labels for this session { qId: "New Label" }
 }
 
-export interface Attendance {
-  id: string;
-  trainingId: string;
-  date: string;
-  name: string;
-  signature: string; // Base64 data URL
-  timestamp: number;
-}
-
 export interface Training {
   id: string;
   accessCode: string; 
@@ -63,13 +54,13 @@ export interface Training {
   facilitatorQuestions: Question[];
   processQuestions: Question[];
   createdAt: number;
+  isHidden?: boolean;
   
   // New Optional Information Fields
   learningMethod?: string; // Klasikal, Blended, Daring Learning
   location?: string;       // Malang, Surabaya, Madiun
   participantLimit?: number; // Batas maksimal responden
   allowManualInput?: boolean; // Izin input manual fasilitator oleh responden
-  enableAttendance?: boolean; // Fitur presensi
 
   // Automation Features
   targets?: number[]; 

@@ -102,6 +102,15 @@ export const saveTraining = async (training: Training): Promise<void> => {
     }
 };
 
+export const toggleTrainingVisibility = async (trainingId: string, isHidden: boolean): Promise<void> => {
+    try {
+        await setDoc(doc(db, 'trainings', trainingId), { isHidden }, { merge: true });
+    } catch (error) {
+        console.error("Error toggling training visibility:", error);
+        throw error;
+    }
+};
+
 export const deleteTraining = async (id: string): Promise<void> => {
     try {
         await deleteDoc(doc(db, 'trainings', id));
@@ -170,30 +179,6 @@ export const saveResponse = async (response: Response): Promise<void> => {
     } catch (error) {
         console.error("Error saving response:", error);
         throw error;
-    }
-};
-
-export const saveAttendance = async (attendance: any): Promise<void> => {
-    try {
-        const cleanAttendance = sanitizeData(attendance);
-        await setDoc(doc(db, 'attendances', attendance.id), cleanAttendance);
-    } catch (error) {
-        console.error("Error saving attendance:", error);
-        throw error;
-    }
-};
-
-export const getAttendances = async (trainingId: string, date?: string): Promise<any[]> => {
-    try {
-        let q = query(collection(db, 'attendances'), where('trainingId', '==', trainingId));
-        if (date) {
-            q = query(q, where('date', '==', date));
-        }
-        const querySnapshot = await getDocs(q);
-        return querySnapshot.docs.map(doc => doc.data() as any).sort((a, b) => b.timestamp - a.timestamp);
-    } catch (error) {
-        console.error("Error getting attendances:", error);
-        return [];
     }
 };
 
@@ -725,31 +710,6 @@ export const saveRespondentHistory = (trainingId: string, facilitatorId: string)
         }
     } catch (e) {
         console.error("Failed to save history locally", e);
-    }
-};
-
-export const hasSubmittedAttendanceToday = (trainingId: string, date: string): boolean => {
-    try {
-        const histStr = localStorage.getItem('attendance_history');
-        const hist = histStr ? JSON.parse(histStr) : {};
-        if (hist[trainingId] && hist[trainingId].includes(date)) return true;
-        return false;
-    } catch (e) {
-        return false;
-    }
-};
-
-export const saveAttendanceHistory = (trainingId: string, date: string): void => {
-    try {
-        const histStr = localStorage.getItem('attendance_history');
-        let hist = histStr ? JSON.parse(histStr) : {};
-        if (!hist[trainingId]) hist[trainingId] = [];
-        if (!hist[trainingId].includes(date)) {
-            hist[trainingId].push(date);
-            localStorage.setItem('attendance_history', JSON.stringify(hist));
-        }
-    } catch (e) {
-        console.error("Failed to save attendance history locally", e);
     }
 };
 
