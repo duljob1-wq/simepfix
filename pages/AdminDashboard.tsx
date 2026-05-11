@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { getTrainings, deleteTraining, getResponses, getGlobalQuestions, saveGlobalQuestion, deleteGlobalQuestion, getContacts, saveContact, deleteContact, getSettings, saveSettings, resetApplicationData, saveTraining, exportAllData, importAllData, getThemes, saveTheme, deleteTheme, getGuestEntries, clearGuestEntries } from '../services/storageService';
+import { getTrainings, deleteTraining, getResponses, getGlobalQuestions, saveGlobalQuestion, deleteGlobalQuestion, getContacts, saveContact, deleteContact, getSettings, saveSettings, resetApplicationData, saveTraining, exportAllData, importAllData, getThemes, saveTheme, deleteTheme, getGuestEntries, clearGuestEntries, toggleTrainingVisibility } from '../services/storageService';
 import { exportToPDF, exportToExcel, exportToWord } from '../services/exportService';
 import { Training, GlobalQuestion, QuestionType, Contact, AppSettings, TrainingTheme, Question, GuestEntry } from '../types';
 import * as XLSX from 'xlsx';
