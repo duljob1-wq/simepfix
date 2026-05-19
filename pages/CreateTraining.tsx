@@ -88,13 +88,13 @@ export const CreateTraining: React.FC = () => {
   const [processQuestions, setProcessQuestions] = useState<Question[]>([]);
 
   // Automation Targets
-  const [targets, setTargets] = useState<number[]>([]);
+  const [targets, setTargets] = useState<number[]>([17]);
   const [newTargetInput, setNewTargetInput] = useState('');
 
   // Process Automation
   const [processOrganizerName, setProcessOrganizerName] = useState('');
   const [processOrganizerWa, setProcessOrganizerWa] = useState('');
-  const [processTargets, setProcessTargets] = useState<number[]>([]); 
+  const [processTargets, setProcessTargets] = useState<number[]>([17]); 
   const [newProcessTargetInput, setNewProcessTargetInput] = useState(''); 
   const [showProcessSuggestions, setShowProcessSuggestions] = useState(false);
 
@@ -184,6 +184,8 @@ export const CreateTraining: React.FC = () => {
           const procDefaults = globals.filter(q => q.category === 'process' && q.isDefault).map(q => ({ id: uuidv4(), label: q.label, type: q.type }));
           setFacilitatorQuestions(facDefaults);
           setProcessQuestions(procDefaults);
+          setTargets([17]);
+          setProcessTargets([17]);
         }
     };
     init();
