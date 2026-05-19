@@ -6,6 +6,23 @@ import { saveTraining, getTrainingById, getGlobalQuestions, getContacts, saveCon
 import { QuestionBuilder } from '../components/QuestionBuilder';
 import { ArrowLeft, Save, Plus, X, Calendar, UserPlus, Settings, CheckCircle, Lock, Unlock, MessageSquare, Trash2, FileText, Edit2, Phone, ChevronDown, Check, FolderOpen, Clock, Hash, UserCheck, MapPin, Monitor, User, PenTool, RefreshCw, AlertCircle } from 'lucide-react';
 
+const getEffectiveIsOpen = (session: Facilitator) => {
+    if (session.isOpen !== undefined) return session.isOpen;
+    
+    if (!session.sessionDate) return undefined;
+    const now = new Date();
+    const [year, month, day] = session.sessionDate.split('-').map(Number);
+    const sessionDateTime = new Date(year, month - 1, day);
+    if (session.sessionStartTime) {
+        const [hours, minutes] = session.sessionStartTime.split(':').map(Number);
+        sessionDateTime.setHours(hours, minutes, 0, 0);
+    } else {
+        sessionDateTime.setHours(0, 0, 0, 0);
+    }
+    
+    return now >= sessionDateTime ? true : undefined;
+};
+
 export const CreateTraining: React.FC = () => {
   const navigate = useNavigate();
   const { trainingId } = useParams<{ trainingId: string }>();
@@ -602,7 +619,40 @@ export const CreateTraining: React.FC = () => {
                                                 {editingSessionId === session.id ? (
                                                     <div className="flex-1 grid grid-cols-1 md:grid-cols-12 gap-2 items-center w-full"><div className="md:col-span-5"><input type="text" value={editSessionSubject} onChange={e => setEditSessionSubject(e.target.value)} className="w-full border border-indigo-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Materi" autoFocus /></div><div className="md:col-span-3"><input type="date" value={editSessionDate} min={startDate} max={endDate} onChange={e => setEditSessionDate(e.target.value)} className="w-full border border-indigo-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" /></div><div className="md:col-span-2"><input type="time" value={editSessionTime} onChange={e => setEditSessionTime(e.target.value)} className="w-full border border-indigo-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" /></div><div className="md:col-span-2 flex gap-1 justify-end"><button onClick={saveEditSession} className="bg-green-600 text-white p-1.5 rounded hover:bg-green-700 transition" title="Simpan Perubahan"><Check size={16}/></button><button onClick={cancelEditSession} className="bg-slate-300 text-slate-700 p-1.5 rounded hover:bg-slate-400 transition" title="Batal"><X size={16}/></button></div></div>
                                                 ) : (
-                                                    <><div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-2"><div className="flex items-center gap-2"><div className="font-medium text-slate-700">{session.subject}</div><div className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide flex items-center gap-1 ${session.isOpen ? 'bg-indigo-100 text-indigo-700 border border-indigo-200' : session.isOpen === false ? 'bg-red-100 text-red-700 border border-red-200' : 'bg-slate-100 text-slate-500 border border-slate-200'}`}>{session.isOpen ? <Unlock size={10}/> : session.isOpen === false ? <Lock size={10}/> : <Clock size={10}/>}{session.isOpen ? 'MANUAL: DIBUKA' : session.isOpen === false ? 'MANUAL: DIKUNCI' : 'OTOMATIS'}</div></div><div className="flex items-center gap-2 text-slate-500 text-xs sm:text-sm"><Calendar size={14}/> {new Date(session.sessionDate).toLocaleDateString('id-ID')}{session.sessionStartTime && (<span className="flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-mono ml-2 border bg-slate-100 border-slate-200 text-slate-600"><Clock size={12}/> {session.sessionStartTime}</span>)}</div></div><div className="flex items-center gap-1 ml-2"><button onClick={() => startEditSession(session)} className="text-slate-300 hover:text-indigo-600 p-1.5 transition rounded-lg hover:bg-indigo-50" title="Edit Sesi"><Edit2 size={16}/></button><button onClick={() => toggleSessionLock(session.id, session.isOpen)} className={`p-1.5 rounded-lg transition ${session.isOpen !== undefined ? (session.isOpen ? 'text-emerald-600 hover:bg-emerald-50' : 'text-red-600 hover:bg-red-50') : 'text-slate-400 hover:text-indigo-600 hover:bg-slate-100'}`} title="Ubah Status">{session.isOpen !== undefined ? (session.isOpen ? <Unlock size={16}/> : <Lock size={16}/>) : <Clock size={16}/>}</button><button onClick={() => removeSession(session.id)} className="text-slate-300 hover:text-red-500 ml-1 p-1.5 transition rounded-lg hover:bg-red-50" title="Hapus Sesi"><Trash2 size={16}/></button></div></>
+                                                    <><div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                                        {(() => {
+                                                            const effOpen = getEffectiveIsOpen(session);
+                                                            return (
+                                                                <>
+                                                                <div className="flex items-center gap-2">
+                                                                    <div className="font-medium text-slate-700">{session.subject}</div>
+                                                                    <div className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide flex items-center gap-1 ${effOpen ? 'bg-indigo-100 text-indigo-700 border border-indigo-200' : effOpen === false ? 'bg-red-100 text-red-700 border border-red-200' : 'bg-slate-100 text-slate-500 border border-slate-200'}`}>
+                                                                        {effOpen ? <Unlock size={10}/> : effOpen === false ? <Lock size={10}/> : <Clock size={10}/>}
+                                                                        {effOpen ? 'MANUAL: DIBUKA' : effOpen === false ? 'MANUAL: DIKUNCI' : 'OTOMATIS'}
+                                                                    </div>
+                                                                </div>
+                                                                <div className="flex items-center gap-2 text-slate-500 text-xs sm:text-sm">
+                                                                    <Calendar size={14}/> {new Date(session.sessionDate).toLocaleDateString('id-ID')}
+                                                                    {session.sessionStartTime && (<span className="flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-mono ml-2 border bg-slate-100 border-slate-200 text-slate-600"><Clock size={12}/> {session.sessionStartTime}</span>)}
+                                                                </div>
+                                                                </>
+                                                            );
+                                                        })()}
+                                                    </div>
+                                                    <div className="flex items-center gap-1 ml-2">
+                                                        {(() => {
+                                                            const effOpen = getEffectiveIsOpen(session);
+                                                            return (
+                                                                <>
+                                                                <button onClick={() => startEditSession(session)} className="text-slate-300 hover:text-indigo-600 p-1.5 transition rounded-lg hover:bg-indigo-50" title="Edit Sesi"><Edit2 size={16}/></button>
+                                                                <button onClick={() => toggleSessionLock(session.id, session.isOpen)} className={`p-1.5 rounded-lg transition ${effOpen !== undefined ? (effOpen ? 'text-emerald-600 hover:bg-emerald-50' : 'text-red-600 hover:bg-red-50') : 'text-slate-400 hover:text-indigo-600 hover:bg-slate-100'}`} title="Ubah Status">
+                                                                    {effOpen !== undefined ? (effOpen ? <Unlock size={16}/> : <Lock size={16}/>) : <Clock size={16}/>}
+                                                                </button>
+                                                                <button onClick={() => removeSession(session.id)} className="text-slate-300 hover:text-red-500 ml-1 p-1.5 transition rounded-lg hover:bg-red-50" title="Hapus Sesi"><Trash2 size={16}/></button>
+                                                                </>
+                                                            );
+                                                        })()}
+                                                    </div></>
                                                 )}
                                             </div>
                                         ))}

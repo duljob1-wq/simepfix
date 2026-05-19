@@ -142,18 +142,17 @@ export const RespondentView: React.FC = () => {
           if (f.isOpen === false) return false;
           if (f.isOpen === true) return true;
 
+          // "Otomatis" mode (f.isOpen === undefined)
           // Date Check
-          if (f.sessionDate !== todayStr) return false;
-
-          // Time Check
+          const [sY, sM, sD] = f.sessionDate.split('-').map(Number);
+          const startDateTime = new Date(sY, sM - 1, sD);
           if (f.sessionStartTime) {
               const [hours, minutes] = f.sessionStartTime.split(':').map(Number);
-              const startDateTime = new Date();
               startDateTime.setHours(hours, minutes, 0, 0);
-              if (today < startDateTime) return false;
+          } else {
+              startDateTime.setHours(0, 0, 0, 0);
           }
-
-          return true;
+          return today >= startDateTime;
       });
 
       // 2. Group them by Subject + Date + Time
