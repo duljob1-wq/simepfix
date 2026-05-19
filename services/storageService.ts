@@ -102,15 +102,6 @@ export const saveTraining = async (training: Training): Promise<void> => {
     }
 };
 
-export const toggleTrainingVisibility = async (trainingId: string, isHidden: boolean): Promise<void> => {
-    try {
-        await setDoc(doc(db, 'trainings', trainingId), { isHidden }, { merge: true });
-    } catch (error) {
-        console.error("Error toggling training visibility:", error);
-        throw error;
-    }
-};
-
 export const deleteTraining = async (id: string): Promise<void> => {
     try {
         await deleteDoc(doc(db, 'trainings', id));

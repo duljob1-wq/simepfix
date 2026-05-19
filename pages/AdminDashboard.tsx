@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { getTrainings, deleteTraining, getResponses, getGlobalQuestions, saveGlobalQuestion, deleteGlobalQuestion, getContacts, saveContact, deleteContact, getSettings, saveSettings, resetApplicationData, saveTraining, exportAllData, importAllData, getThemes, saveTheme, deleteTheme, getGuestEntries, clearGuestEntries, toggleTrainingVisibility } from '../services/storageService';
+import { getTrainings, deleteTraining, getResponses, getGlobalQuestions, saveGlobalQuestion, deleteGlobalQuestion, getContacts, saveContact, deleteContact, getSettings, saveSettings, resetApplicationData, saveTraining, exportAllData, importAllData, getThemes, saveTheme, deleteTheme, getGuestEntries, clearGuestEntries } from '../services/storageService';
 import { exportToPDF, exportToExcel, exportToWord } from '../services/exportService';
 import { Training, GlobalQuestion, QuestionType, Contact, AppSettings, TrainingTheme, Question, GuestEntry } from '../types';
 import * as XLSX from 'xlsx';
@@ -205,15 +205,6 @@ export const AdminDashboard: React.FC = () => {
   const handleSaveTheme = async () => { if (activeTheme && activeTheme.name) { await saveTheme(activeTheme); setActiveTheme(null); setIsEditingTheme(false); refreshData(); } else { alert("Nama tema tidak boleh kosong"); } };
   const handleDeleteTheme = async (id: string) => { if(confirm("Hapus tema ini?")) { await deleteTheme(id); refreshData(); } };
   
-  const handleToggleTrainingVisibility = async (trainingId: string, currentHidden: boolean) => {
-      try {
-          await toggleTrainingVisibility(trainingId, !currentHidden);
-          setTrainings(prev => prev.map(t => t.id === trainingId ? { ...t, isHidden: !currentHidden } : t));
-      } catch (error) {
-          alert('Gagal mengubah visibilitas pelatihan.');
-      }
-  };
-
   // UPDATED: Save Contact with Phone Number Formatting and Extra Fields
   const handleSaveContact = async () => { 
       if(!newContact.name) return; 
@@ -396,24 +387,8 @@ export const AdminDashboard: React.FC = () => {
       }
   };
 
-  const filteredMgmtTrainings = trainings.filter(t => { 
-      if (t.isHidden && !isSuperAdmin) return false;
-      const matchSearch = t.title.toLowerCase().includes(mgmtSearch.toLowerCase()); 
-      let matchDate = true; 
-      if (mgmtDateStart && mgmtDateEnd) { matchDate = (t.startDate <= mgmtDateEnd) && (t.endDate >= mgmtDateStart); } 
-      const matchMethod = filterMethod ? t.learningMethod === filterMethod : true; 
-      const matchLocation = filterLocation ? t.location === filterLocation : true; 
-      return matchSearch && matchDate && matchMethod && matchLocation; 
-  }).sort((a, b) => b.createdAt - a.createdAt);
-  const filteredReportTrainings = trainings.filter(t => { 
-      if (t.isHidden && !isSuperAdmin) return false;
-      const matchSearch = t.title.toLowerCase().includes(reportSearch.toLowerCase()); 
-      let matchDate = true; 
-      if (reportDateStart && reportDateEnd) { matchDate = (t.startDate <= reportDateEnd) && (t.endDate >= reportDateStart); } 
-      const matchMethod = reportFilterMethod ? t.learningMethod === reportFilterMethod : true; 
-      const matchLocation = reportFilterLocation ? t.location === reportFilterLocation : true; 
-      return matchSearch && matchDate && matchMethod && matchLocation; 
-  }).sort((a, b) => b.createdAt - a.createdAt);
+  const filteredMgmtTrainings = trainings.filter(t => { const matchSearch = t.title.toLowerCase().includes(mgmtSearch.toLowerCase()); let matchDate = true; if (mgmtDateStart && mgmtDateEnd) { matchDate = (t.startDate <= mgmtDateEnd) && (t.endDate >= mgmtDateStart); } const matchMethod = filterMethod ? t.learningMethod === filterMethod : true; const matchLocation = filterLocation ? t.location === filterLocation : true; return matchSearch && matchDate && matchMethod && matchLocation; }).sort((a, b) => b.createdAt - a.createdAt);
+  const filteredReportTrainings = trainings.filter(t => { const matchSearch = t.title.toLowerCase().includes(reportSearch.toLowerCase()); let matchDate = true; if (reportDateStart && reportDateEnd) { matchDate = (t.startDate <= reportDateEnd) && (t.endDate >= reportDateStart); } const matchMethod = reportFilterMethod ? t.learningMethod === reportFilterMethod : true; const matchLocation = reportFilterLocation ? t.location === reportFilterLocation : true; return matchSearch && matchDate && matchMethod && matchLocation; }).sort((a, b) => b.createdAt - a.createdAt);
   const filteredContacts = contacts.filter(c => c.name.toLowerCase().includes(contactSearch.toLowerCase()) || c.whatsapp.includes(contactSearch)).sort((a, b) => a.name.localeCompare(b.name));
 
   const openShareModal = (training: Training) => { const origin = window.location.origin; const baseUrl = origin.endsWith('/') ? origin.slice(0, -1) : origin; const cleanUrl = `${baseUrl}/#/evaluate/${training.id}`; setShareData({ shortUrl: cleanUrl, fullUrl: cleanUrl, title: training.title, accessCode: training.accessCode || 'N/A' }); setCopied(false); setShareTab('link'); setShowShareModal(true); };
@@ -500,19 +475,6 @@ export const AdminDashboard: React.FC = () => {
                                     <div className="flex items-center gap-2"><Calendar size={14} /> <span>{new Date(t.startDate).toLocaleDateString('id-ID')}</span></div>
                                     <div className="flex items-center gap-2"><Users size={14} /> <span>{t.facilitators.length} Fasilitator</span></div>
                                     {(t.learningMethod || t.location) && (<div className="flex flex-wrap gap-1 mt-2">{t.learningMethod && <span className="text-[10px] px-2 py-0.5 bg-blue-50 text-blue-700 rounded border border-blue-100">{t.learningMethod}</span>}{t.location && <span className="text-[10px] px-2 py-0.5 bg-purple-50 text-purple-700 rounded border border-purple-100">{t.location}</span>}</div>)}
-                                    {isSuperAdmin && (
-                                        <div className="pt-2 mt-2 border-t border-slate-100">
-                                            <label className="flex items-center gap-2 text-xs font-semibold text-slate-600 hover:text-slate-800 cursor-pointer w-fit">
-                                                <input 
-                                                    type="checkbox" 
-                                                    checked={!!t.isHidden} 
-                                                    onChange={() => handleToggleTrainingVisibility(t.id, !!t.isHidden)}
-                                                    className="rounded border-slate-300 text-red-500 focus:ring-red-500 ring-offset-1 w-3.5 h-3.5 cursor-pointer"
-                                                />
-                                                Sembunyikan dari Reguler Admin
-                                            </label>
-                                        </div>
-                                    )}
                                 </div>
                             </div>
                             <div className="px-6 py-4 border-t border-slate-100 bg-slate-50/50 flex justify-between items-center">
@@ -783,17 +745,6 @@ export const AdminDashboard: React.FC = () => {
                                                 <span className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide bg-amber-50 text-amber-600 border border-amber-200">
                                                     <Clock size={10}/> Akan Datang
                                                 </span>
-                                            )}
-                                            {isSuperAdmin && (
-                                                <label className="flex items-center gap-1.5 text-[10px] font-bold text-slate-500 hover:text-slate-800 cursor-pointer ml-2 bg-white px-2 py-1 rounded border border-slate-200">
-                                                    <input 
-                                                        type="checkbox" 
-                                                        checked={!!t.isHidden} 
-                                                        onChange={() => handleToggleTrainingVisibility(t.id, !!t.isHidden)}
-                                                        className="rounded border-slate-300 text-red-500 focus:ring-red-500 ring-offset-1 w-3 h-3 cursor-pointer"
-                                                    />
-                                                    Tersembunyi
-                                                </label>
                                             )}
                                         </div>
                                     </td>

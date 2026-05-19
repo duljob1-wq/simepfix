@@ -54,7 +54,6 @@ export interface Training {
   facilitatorQuestions: Question[];
   processQuestions: Question[];
   createdAt: number;
-  isHidden?: boolean;
   
   // New Optional Information Fields
   learningMethod?: string; // Klasikal, Blended, Daring Learning
