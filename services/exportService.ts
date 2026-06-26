@@ -540,7 +540,7 @@ const getGroupTextAnswers = (responses: Response[], qIds: string[]) => {
     return answers;
 };
 
-export const exportToPDF = async (training: Training) => {
+export const exportToPDF = async (training: Training, mode: 'all' | 'facilitator' | 'organizer' = 'all') => {
   const responses = await getResponses(training.id);
   const settings = await getSettings(); 
   const data = processDataForExport(training, responses);
@@ -550,7 +550,13 @@ export const exportToPDF = async (training: Training) => {
   // --- HALAMAN COVER ---
   doc.setFontSize(16);
   doc.setFont("helvetica", "bold");
-  doc.text('Laporan Rekapitulasi Evaluasi Pelatihan', 14, 20);
+  if (mode === 'all') {
+      doc.text('Laporan Rekapitulasi Evaluasi Pelatihan', 14, 20);
+  } else if (mode === 'facilitator') {
+      doc.text('Laporan Evaluasi Pelatihan - Bagian Fasilitator', 14, 20);
+  } else if (mode === 'organizer') {
+      doc.text('Laporan Evaluasi Pelatihan - Bagian Penyelenggaraan', 14, 20);
+  }
   
   doc.setFontSize(10);
   doc.setFont("helvetica", "normal");
@@ -575,12 +581,13 @@ export const exportToPDF = async (training: Training) => {
   y += 10;
 
   // --- A. DETAIL FASILITATOR (CUSTOM VIEW) ---
-  doc.setFontSize(12);
-  doc.setFont("helvetica", "bold");
-  doc.text('A. Evaluasi Detail Fasilitator', 14, y);
-  y += 2; 
-  
-  const flatSessions = getFlatChronologicalSessions(data.facilitators);
+  if (mode === 'all' || mode === 'facilitator') {
+    doc.setFontSize(12);
+    doc.setFont("helvetica", "bold");
+    doc.text('A. Evaluasi Detail Fasilitator', 14, y);
+    y += 2; 
+    
+    const flatSessions = getFlatChronologicalSessions(data.facilitators);
 
   flatSessions.forEach((session, index) => {
     if (index > 0) {
@@ -723,8 +730,10 @@ export const exportToPDF = async (training: Training) => {
     // TTD Dynamic Close
     addPdfSignatureDynamic(doc, settings, y);
   });
+  }
 
   // --- B. REKAPITULASI (Chunked 12 Rows/Page) ---
+  if (mode === 'all' || mode === 'facilitator') {
   doc.addPage();
   y = 20;
   
@@ -845,11 +854,17 @@ export const exportToPDF = async (training: Training) => {
   
   // TTD Dynamic Close
   addPdfSignatureDynamic(doc, settings, y);
+  }
 
 
   // --- C. PENYELENGGARAAN (Breakdown + Split Comments) ---
-  doc.addPage();
-  y = 20;
+  if (mode === 'all' || mode === 'organizer') {
+  if (mode === 'all') {
+      doc.addPage();
+      y = 20;
+  } else {
+      y += 10;
+  }
 
   doc.setFontSize(12);
   doc.setFont("helvetica", "bold");
@@ -934,8 +949,15 @@ export const exportToPDF = async (training: Training) => {
 
   // TTD Dynamic Close
   addPdfSignatureDynamic(doc, settings, y);
+  }
 
-  doc.save(`Laporan_SIMEP_${training.title.replace(/\s+/g, '_')}.pdf`);
+  let filenameSuffix = '';
+  if (mode === 'facilitator') {
+      filenameSuffix = '_Fasilitator';
+  } else if (mode === 'organizer') {
+      filenameSuffix = '_Penyelenggaraan';
+  }
+  doc.save(`Laporan_SIMEP${filenameSuffix}_${training.title.replace(/\s+/g, '_')}.pdf`);
 };
 
 export const exportToWord = async (training: Training) => {

@@ -62,9 +62,9 @@ export const GuestDashboard: React.FC = () => {
     navigate('/guest');
   };
 
-  const handlePrint = async (type: 'pdf'|'excel'|'word', t: Training) => {
+  const handlePrint = async (type: 'pdf'|'excel'|'word', t: Training, mode: 'all'|'facilitator'|'organizer' = 'all') => {
       try {
-          if (type === 'pdf') await exportToPDF(t);
+          if (type === 'pdf') await exportToPDF(t, mode);
           if (type === 'excel') await exportToExcel(t);
           if (type === 'word') await exportToWord(t);
           setExportDropdownId(null);
@@ -273,15 +273,35 @@ export const GuestDashboard: React.FC = () => {
                                                 <div className="relative" ref={exportDropdownId === t.id ? dropdownRef : null}>
                                                     <button onClick={() => setExportDropdownId(exportDropdownId === t.id ? null : t.id)} className="flex items-center gap-2 px-3 py-2 bg-slate-100 border border-slate-200 rounded-lg text-xs font-bold hover:bg-slate-200 transition"><Printer size={16}/> Cetak <ChevronDown size={14} /></button>
                                                     {exportDropdownId === t.id && (
-                                                        <div className="absolute right-0 top-full mt-2 w-48 bg-white border border-slate-200 rounded-xl shadow-xl z-[60] overflow-hidden text-left animate-in fade-in zoom-in-95">
-                                                            <button onClick={() => handlePrint('pdf', t)} className="w-full text-left px-4 py-3 text-xs font-semibold hover:bg-slate-50 flex items-center gap-3 border-b border-slate-100 cursor-pointer">
-                                                                <div className="w-8 h-8 bg-red-100 text-red-600 flex items-center justify-center rounded"><FileIcon size={16}/></div> PDF
+                                                        <div className="absolute right-0 top-full mt-2 w-72 bg-white border border-slate-200 rounded-xl shadow-xl z-[60] overflow-hidden text-left animate-in fade-in zoom-in-95">
+                                                            <div className="px-4 py-2 bg-slate-50 text-[10px] font-bold text-slate-400 uppercase tracking-wider border-b border-slate-100">Cetak Laporan PDF</div>
+                                                            <button onClick={() => handlePrint('pdf', t, 'all')} className="w-full text-left px-4 py-2.5 text-xs font-semibold hover:bg-slate-50 flex items-center gap-3 border-b border-slate-100 cursor-pointer">
+                                                                <div className="w-6 h-6 bg-red-100 text-red-600 flex items-center justify-center rounded flex-shrink-0"><FileIcon size={14}/></div> 
+                                                                <div>
+                                                                    <p className="font-bold">PDF Lengkap</p>
+                                                                    <p className="text-[10px] text-slate-400 font-normal">Semua Bagian (A, B, C)</p>
+                                                                </div>
                                                             </button>
+                                                            <button onClick={() => handlePrint('pdf', t, 'facilitator')} className="w-full text-left px-4 py-2.5 text-xs font-semibold hover:bg-slate-50 flex items-center gap-3 border-b border-slate-100 cursor-pointer">
+                                                                <div className="w-6 h-6 bg-red-50 text-red-500 flex items-center justify-center rounded flex-shrink-0"><FileIcon size={14}/></div> 
+                                                                <div>
+                                                                    <p className="font-bold">PDF Khusus: Fasilitator</p>
+                                                                    <p className="text-[10px] text-slate-400 font-normal">Bagian 1 (A & B)</p>
+                                                                </div>
+                                                            </button>
+                                                            <button onClick={() => handlePrint('pdf', t, 'organizer')} className="w-full text-left px-4 py-2.5 text-xs font-semibold hover:bg-slate-50 flex items-center gap-3 border-b border-slate-100 cursor-pointer">
+                                                                <div className="w-6 h-6 bg-red-50 text-red-500 flex items-center justify-center rounded flex-shrink-0"><FileIcon size={14}/></div> 
+                                                                <div>
+                                                                    <p className="font-bold">PDF Khusus: Penyelenggaraan</p>
+                                                                    <p className="text-[10px] text-slate-400 font-normal">Bagian 2 (C)</p>
+                                                                </div>
+                                                            </button>
+                                                            <div className="px-4 py-2 bg-slate-50 text-[10px] font-bold text-slate-400 uppercase tracking-wider border-b border-slate-100 font-sans">Ekspor Format Lain</div>
                                                             <button onClick={() => handlePrint('excel', t)} className="w-full text-left px-4 py-3 text-xs font-semibold hover:bg-slate-50 flex items-center gap-3 border-b border-slate-100 cursor-pointer">
-                                                                <div className="w-8 h-8 bg-emerald-100 text-emerald-600 flex items-center justify-center rounded"><FileSpreadsheet size={16}/></div> Excel
+                                                                <div className="w-6 h-6 bg-emerald-100 text-emerald-600 flex items-center justify-center rounded flex-shrink-0"><FileSpreadsheet size={14}/></div> Excel (Semua Data)
                                                             </button>
                                                             <button onClick={() => handlePrint('word', t)} className="w-full text-left px-4 py-3 text-xs font-semibold hover:bg-slate-50 flex items-center gap-3 cursor-pointer">
-                                                                <div className="w-8 h-8 bg-blue-100 text-blue-600 flex items-center justify-center rounded"><FileText size={16}/></div> Word
+                                                                <div className="w-6 h-6 bg-blue-100 text-blue-600 flex items-center justify-center rounded flex-shrink-0"><FileText size={14}/></div> Word (Semua Data)
                                                             </button>
                                                         </div>
                                                     )}
